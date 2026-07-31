@@ -1,0 +1,22 @@
+{
+  "name": "seleksi-2-sso",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "auth-provider/*",
+    "applications/app-a/*",
+    "applications/app-b/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "dev": "docker compose up",
+    "prisma:generate": "npm run prisma:generate --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
