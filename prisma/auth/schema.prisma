@@ -1,0 +1,215 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/.prisma/auth-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("AUTH_DATABASE_URL")
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  name               String
+  email              String              @unique
+  passwordHash       String
+  status             UserStatus          @default(active)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  authorizationCodes AuthorizationCode[]
+  groups             UserGroup[]
+  sessions           SsoSession[]
+  tokens             AccessToken[]
+}
+
+model Group {
+  id          String                   @id @default(uuid())
+  name        String                   @unique
+  description String?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  policies    ApplicationGroupPolicy[]
+  users       UserGroup[]
+}
+
+model UserGroup {
+  id        String   @id @default(uuid())
+  userId    String
+  groupId   String
+  createdAt DateTime @default(now())
+  group     Group    @relation(fields: [groupId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, groupId])
+}
+
+model Application {
+  id                    String                   @id @default(uuid())
+  name                  String
+  clientId              String                   @unique
+  clientSecretHash      String?
+  status                ApplicationStatus        @default(active)
+  launchUrl             String?
+  logoutNotificationUrl String
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  authorizationCodes    AuthorizationCode[]
+  deliveries            EventDelivery[]
+  policies              ApplicationGroupPolicy[]
+  redirectUris          ApplicationRedirectUri[]
+  tokens                AccessToken[]
+}
+
+model ApplicationRedirectUri {
+  id            String      @id @default(uuid())
+  applicationId String
+  redirectUri   String
+  createdAt     DateTime    @default(now())
+  application   Application @relation(fields: [applicationId], references: [id])
+
+  @@unique([applicationId, redirectUri])
+}
+
+model ApplicationGroupPolicy {
+  id            String       @id @default(uuid())
+  applicationId String
+  groupId       String
+  effect        PolicyEffect @default(allow)
+  createdAt     DateTime     @default(now())
+  application   Application  @relation(fields: [applicationId], references: [id])
+  group         Group        @relation(fields: [groupId], references: [id])
+
+  @@unique([applicationId, groupId, effect])
+}
+
+model SsoSession {
+  id                 String              @id @default(uuid())
+  userId             String
+  sessionTokenHash   String              @unique
+  status             SessionStatus       @default(active)
+  createdAt          DateTime            @default(now())
+  expiresAt          DateTime
+  lastActivityAt     DateTime?
+  revokedAt          DateTime?
+  revokeReason       String?
+  ipAddress          String?
+  userAgent          String?
+  authorizationCodes AuthorizationCode[]
+  tokens             AccessToken[]
+  user               User                @relation(fields: [userId], references: [id])
+}
+
+model AuthorizationCode {
+  id            String      @id @default(uuid())
+  codeHash      String      @unique
+  userId        String
+  applicationId String
+  ssoSessionId  String
+  redirectUri   String
+  codeChallenge String
+  createdAt     DateTime    @default(now())
+  expiresAt     DateTime
+  usedAt        DateTime?
+  application   Application @relation(fields: [applicationId], references: [id])
+  ssoSession    SsoSession  @relation(fields: [ssoSessionId], references: [id])
+  user          User        @relation(fields: [userId], references: [id])
+}
+
+model AccessToken {
+  id            String      @id @default(uuid())
+  tokenHash     String      @unique
+  userId        String
+  applicationId String
+  ssoSessionId  String
+  scopes        Json?
+  status        TokenStatus @default(active)
+  issuedAt      DateTime    @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  application   Application @relation(fields: [applicationId], references: [id])
+  ssoSession    SsoSession  @relation(fields: [ssoSessionId], references: [id])
+  user          User        @relation(fields: [userId], references: [id])
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  eventType     String
+  actorId       String?
+  userId        String?
+  applicationId String?
+  sessionId     String?
+  result        String
+  metadata      Json?
+  ipAddress     String?
+  createdAt     DateTime @default(now())
+}
+
+model Event {
+  id               String          @id @default(uuid())
+  eventType        String
+  userId           String
+  centralSessionId String?
+  applicationId    String?
+  payload          Json
+  status           EventStatus     @default(pending)
+  createdAt        DateTime        @default(now())
+  publishedAt      DateTime?
+  deliveries       EventDelivery[]
+}
+
+model EventDelivery {
+  id            String         @id @default(uuid())
+  eventId       String
+  applicationId String
+  status        DeliveryStatus @default(pending)
+  attemptCount  Int            @default(0)
+  lastAttemptAt DateTime?
+  nextRetryAt   DateTime?
+  processedAt   DateTime?
+  lastError     String?
+  application   Application    @relation(fields: [applicationId], references: [id])
+  event         Event          @relation(fields: [eventId], references: [id])
+
+  @@unique([eventId, applicationId])
+}
+
+enum UserStatus {
+  active
+  inactive
+}
+
+enum ApplicationStatus {
+  active
+  inactive
+}
+
+enum PolicyEffect {
+  allow
+}
+
+enum SessionStatus {
+  active
+  expired
+  revoked
+}
+
+enum TokenStatus {
+  active
+  expired
+  revoked
+}
+
+enum EventStatus {
+  pending
+  published
+  processed
+  dead_lettered
+}
+
+enum DeliveryStatus {
+  pending
+  processing
+  succeeded
+  retrying
+  failed
+}

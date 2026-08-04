@@ -12,11 +12,20 @@
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "dev": "docker compose up",
-    "prisma:generate": "npm run prisma:generate --workspaces --if-present"
+    "prisma:generate": "npm run prisma:generate --workspaces --if-present",
+    "db:generate": "prisma generate --schema prisma/auth/schema.prisma && prisma generate --schema prisma/local/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema prisma/auth/schema.prisma && prisma migrate deploy --schema prisma/local/schema.prisma",
+    "db:seed": "tsx prisma/auth/seed.ts && tsx prisma/local/seed.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "bcrypt": "^6.0.0",
+    "prisma": "^6.19.3",
+    "tsx": "^4.23.5"
   }
 }
