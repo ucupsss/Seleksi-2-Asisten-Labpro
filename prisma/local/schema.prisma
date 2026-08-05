@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/.prisma/local-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("LOCAL_DATABASE_URL")
+}
+
+model LocalSession {
+  id               String        @id @default(uuid())
+  appKey           String
+  sessionTokenHash String        @unique
+  externalUserId   String
+  centralSessionId String
+  status           SessionStatus @default(active)
+  createdAt        DateTime      @default(now())
+  expiresAt        DateTime
+  lastActivityAt   DateTime?
+  revokedAt        DateTime?
+  revokeReason     String?
+
+  @@index([appKey, externalUserId])
+  @@index([appKey, centralSessionId])
+}
+
+model ProfileCache {
+  id             String   @id @default(uuid())
+  appKey         String
+  externalUserId String
+  name           String
+  email          String
+  groups         Json?
+  syncedAt       DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([appKey, externalUserId])
+}
+
+model ProcessedEvent {
+  eventId     String   @id
+  appKey      String
+  eventType   String
+  processedAt DateTime @default(now())
+  result      String
+
+  @@index([appKey, eventType])
+}
+
+model ActivityLog {
+  id            String   @id @default(uuid())
+  appKey        String
+  eventType     String
+  message       String
+  requestId     String?
+  correlationId String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([appKey, createdAt])
+}
+
+enum SessionStatus {
+  active
+  expired
+  revoked
+}
