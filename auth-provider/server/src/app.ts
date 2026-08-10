@@ -8,9 +8,15 @@ import {
   notFoundMiddleware,
 } from "./middleware/error-handler.js";
 import { requestIdMiddleware } from "./middleware/request-id.js";
+import { createAdminRoutes } from "./routes/admin.routes.js";
 import { createAuthRoutes } from "./routes/auth.routes.js";
 import { healthRoutes } from "./routes/health.routes.js";
 import { createOauthRoutes } from "./routes/oauth.routes.js";
+import {
+  createAdminService,
+  createPrismaAdminRepository,
+  type AdminService,
+} from "./services/admin.service.js";
 import {
   createAuthService,
   createPrismaAuthRepository,
@@ -29,6 +35,7 @@ import {
 export interface CreateAuthAppOptions {
   authService?: AuthService;
   oauthService?: OauthService;
+  adminService?: AdminService;
 }
 
 export function createAuthApp(options: CreateAuthAppOptions = {}) {
@@ -50,6 +57,11 @@ export function createAuthApp(options: CreateAuthAppOptions = {}) {
       authorizationCodeTtlMinutes: 5,
       accessTokenTtlMinutes: 30,
     });
+  const adminService =
+    options.adminService ??
+    createAdminService({
+      repository: createPrismaAdminRepository(authDb),
+    });
   const app = express();
 
   app.use(
@@ -65,6 +77,7 @@ export function createAuthApp(options: CreateAuthAppOptions = {}) {
   app.use(healthRoutes);
   app.use(createAuthRoutes(authService, config));
   app.use(createOauthRoutes(authService, oauthService, config));
+  app.use(createAdminRoutes(adminService));
 
   app.use(notFoundMiddleware);
   app.use(errorHandler);
