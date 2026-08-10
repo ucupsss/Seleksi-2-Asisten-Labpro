@@ -10,14 +10,25 @@ import {
 import { requestIdMiddleware } from "./middleware/request-id.js";
 import { createAuthRoutes } from "./routes/auth.routes.js";
 import { healthRoutes } from "./routes/health.routes.js";
+import { createOauthRoutes } from "./routes/oauth.routes.js";
 import {
   createAuthService,
   createPrismaAuthRepository,
   type AuthService,
 } from "./services/auth.service.js";
+import {
+  createOauthService,
+  createPrismaOauthRepository,
+  type OauthService,
+} from "./services/oauth.service.js";
+import {
+  createPolicyService,
+  createPrismaPolicyRepository,
+} from "./services/policy.service.js";
 
 export interface CreateAuthAppOptions {
   authService?: AuthService;
+  oauthService?: OauthService;
 }
 
 export function createAuthApp(options: CreateAuthAppOptions = {}) {
@@ -27,6 +38,17 @@ export function createAuthApp(options: CreateAuthAppOptions = {}) {
     createAuthService({
       repository: createPrismaAuthRepository(authDb),
       sessionTtlMinutes: config.ssoSessionTtlMinutes,
+    });
+  const policyService = createPolicyService({
+    repository: createPrismaPolicyRepository(authDb),
+  });
+  const oauthService =
+    options.oauthService ??
+    createOauthService({
+      repository: createPrismaOauthRepository(authDb),
+      policyService,
+      authorizationCodeTtlMinutes: 5,
+      accessTokenTtlMinutes: 30,
     });
   const app = express();
 
@@ -42,6 +64,7 @@ export function createAuthApp(options: CreateAuthAppOptions = {}) {
 
   app.use(healthRoutes);
   app.use(createAuthRoutes(authService, config));
+  app.use(createOauthRoutes(authService, oauthService, config));
 
   app.use(notFoundMiddleware);
   app.use(errorHandler);
