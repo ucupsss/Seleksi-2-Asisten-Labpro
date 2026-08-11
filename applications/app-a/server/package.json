@@ -1,0 +1,20 @@
+{
+  "name": "@sso/app-a-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "npm run build -w @sso/relying-app-server && tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@sso/relying-app-server": "0.0.0",
+    "dotenv": "^17.2.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.5",
+    "vitest": "^2.1.9"
+  }
+}
