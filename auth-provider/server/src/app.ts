@@ -23,6 +23,10 @@ import {
   type AuthService,
 } from "./services/auth.service.js";
 import {
+  createEventService,
+  createPrismaEventRepository,
+} from "./services/event.service.js";
+import {
   createOauthService,
   createPrismaOauthRepository,
   type OauthService,
@@ -40,10 +44,14 @@ export interface CreateAuthAppOptions {
 
 export function createAuthApp(options: CreateAuthAppOptions = {}) {
   const config = loadAuthConfig();
+  const eventService = createEventService({
+    repository: createPrismaEventRepository(authDb),
+  });
   const authService =
     options.authService ??
     createAuthService({
       repository: createPrismaAuthRepository(authDb),
+      eventService,
       sessionTtlMinutes: config.ssoSessionTtlMinutes,
     });
   const policyService = createPolicyService({

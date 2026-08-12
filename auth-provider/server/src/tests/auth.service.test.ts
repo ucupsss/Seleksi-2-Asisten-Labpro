@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { HttpError } from "../errors.js";
 import type { AuthRepository } from "../services/auth.service.js";
 import { createAuthService } from "../services/auth.service.js";
+import type { EventService } from "../services/event.service.js";
 
 const activeUser = {
   id: "user-1",
@@ -176,6 +177,58 @@ describe("auth service", () => {
         name: "Student User",
         email: "student@example.com",
       },
+    });
+  });
+
+  it("creates SessionRevoked event on SSO logout when event service is configured", async () => {
+    const { repository, auditLogs } = createRepository();
+    const eventRequests: Array<{ sessionTokenHash: string; reason: string }> = [];
+    const eventService: Pick<EventService, "createSessionRevokedEvent"> = {
+      createSessionRevokedEvent: async (input) => {
+        eventRequests.push(input);
+        return {
+          event: {
+            id: "event-1",
+            eventType: "SessionRevoked",
+            userId: "user-1",
+            centralSessionId: "session-1",
+            applicationId: null,
+            payload: {},
+            status: "pending",
+            createdAt: new Date("2026-08-09T10:00:00.000Z"),
+          },
+          revokedSession: {
+            id: "session-1",
+            userId: "user-1",
+            sessionTokenHash: "hashed-session-token",
+            status: "revoked",
+            revokedAt: new Date("2026-08-09T10:00:00.000Z"),
+          },
+          deliveryCount: 2,
+        };
+      },
+    };
+    const service = createAuthService({
+      repository,
+      eventService,
+      comparePassword: async () => true,
+      generateToken: () => "raw-session-token",
+      now: () => new Date("2026-08-09T10:00:00.000Z"),
+      sessionTtlMinutes: 60,
+    });
+
+    await service.logout("raw-session-token");
+
+    expect(eventRequests).toEqual([
+      {
+        sessionTokenHash:
+          "e6c276c51996dfa4b71f39f34f5f1a5a8f116e29eb538fab6403dd689631c622",
+        reason: "sso_logout",
+      },
+    ]);
+    expect(auditLogs).toContainEqual({
+      eventType: "logout",
+      result: "success",
     });
   });
 });

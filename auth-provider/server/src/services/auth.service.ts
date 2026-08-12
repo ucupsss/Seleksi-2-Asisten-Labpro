@@ -5,6 +5,7 @@ import type {
   PrismaClient,
 } from "../../../../node_modules/.prisma/auth-client/index.js";
 import { HttpError } from "../errors.js";
+import type { EventService } from "./event.service.js";
 
 export interface AuthUserRecord {
   id: string;
@@ -91,6 +92,7 @@ export interface AuthService {
 
 export interface AuthServiceDependencies {
   repository: AuthRepository;
+  eventService?: Pick<EventService, "createSessionRevokedEvent">;
   comparePassword?: (plainPassword: string, passwordHash: string) => Promise<boolean>;
   generateToken?: () => string;
   now?: () => Date;
@@ -212,6 +214,28 @@ export function createAuthService(deps: AuthServiceDependencies): AuthService {
 
     async logout(sessionToken, reason = "sso_logout") {
       if (!sessionToken) {
+        return;
+      }
+
+      if (deps.eventService) {
+        const result = await deps.eventService.createSessionRevokedEvent({
+          sessionTokenHash: sha256Hex(sessionToken),
+          reason,
+        });
+
+        if (result) {
+          await deps.repository.createAuditLog({
+            eventType: "logout",
+            result: "success",
+            userId: result.revokedSession.userId,
+            sessionId: result.revokedSession.id,
+            metadata: {
+              reason,
+              eventId: result.event.id,
+              deliveryCount: result.deliveryCount,
+            },
+          });
+        }
         return;
       }
 
