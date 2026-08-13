@@ -1,0 +1,11 @@
+@import "@sso/ui/styles.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background:
+    linear-gradient(180deg, rgba(240, 249, 255, 0.8), transparent 280px),
+    hsl(var(--background));
+}
