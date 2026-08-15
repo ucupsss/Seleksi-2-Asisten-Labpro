@@ -15,6 +15,7 @@ const config: RelyingAppConfig = {
   appKey: "app-a",
   appName: "App A",
   authBaseUrl: "http://localhost:4000",
+  authPublicBaseUrl: "http://localhost:4000",
   webHomeUrl: "http://localhost:5173",
   clientId: "app-a-client",
   redirectUri: "http://localhost:4101/auth/callback",
@@ -145,6 +146,17 @@ function getCookie(response: request.Response, name: string) {
 }
 
 describe("relying app server", () => {
+  it("returns health status for compose health checks", async () => {
+    const response = await request(createTestApp()).get("/health");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      status: "ok",
+      appKey: "app-a",
+      appName: "App A",
+    });
+  });
+
   it("starts login by returning authorize URL and pending cookies", async () => {
     const response = await request(createTestApp()).post("/login/start");
 

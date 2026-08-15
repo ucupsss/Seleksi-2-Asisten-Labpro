@@ -4,11 +4,11 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react()],
   server: {
-    port: 5174,
+    port: 4200,
     proxy: {
-      "/login": "http://localhost:4102",
-      "/session": "http://localhost:4102",
-      "/logout": "http://localhost:4102",
+      "/login": process.env.APP_B_SERVER_URL ?? "http://localhost:4201",
+      "/session": process.env.APP_B_SERVER_URL ?? "http://localhost:4201",
+      "/logout": process.env.APP_B_SERVER_URL ?? "http://localhost:4201",
     },
   },
 });

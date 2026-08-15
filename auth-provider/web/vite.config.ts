@@ -6,9 +6,9 @@ export default defineConfig({
   server: {
     port: 4000,
     proxy: {
-      "/auth": "http://localhost:4001",
-      "/admin": "http://localhost:4001",
-      "/oauth": "http://localhost:4001",
+      "/auth": process.env.AUTH_SERVER_URL ?? "http://localhost:4001",
+      "/admin": process.env.AUTH_SERVER_URL ?? "http://localhost:4001",
+      "/oauth": process.env.AUTH_SERVER_URL ?? "http://localhost:4001",
     },
   },
 });

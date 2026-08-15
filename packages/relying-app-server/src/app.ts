@@ -103,12 +103,20 @@ export function createAppServer(
   app.use(express.json());
   app.use(cookieParser());
 
+  app.get("/health", (_req, res) => {
+    res.json({
+      status: "ok",
+      appKey: config.appKey,
+      appName: config.appName,
+    });
+  });
+
   app.post("/login/start", async (_req, res, next) => {
     try {
       const state = generateState();
       const codeVerifier = generatePkceVerifier();
       const redirectTo = buildAuthorizeUrl({
-        authBaseUrl: config.authBaseUrl,
+        authBaseUrl: config.authPublicBaseUrl ?? config.authBaseUrl,
         clientId: config.clientId,
         redirectUri: config.redirectUri,
         state,

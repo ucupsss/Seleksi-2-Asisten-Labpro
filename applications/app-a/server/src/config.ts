@@ -16,8 +16,12 @@ export function loadAppAConfig(): RelyingAppConfig & { port: number } {
     appKey: "app-a",
     appName: "App A",
     port: numberFromEnv(process.env.APP_A_SERVER_PORT, 4101),
-    authBaseUrl: process.env.AUTH_BASE_URL ?? "http://localhost:4000",
-    webHomeUrl: process.env.APP_A_WEB_HOME_URL ?? "http://localhost:5173",
+    authBaseUrl: process.env.AUTH_BASE_URL ?? "http://localhost:4001",
+    authPublicBaseUrl:
+      process.env.AUTH_PUBLIC_BASE_URL ??
+      process.env.AUTH_BASE_URL ??
+      "http://localhost:4001",
+    webHomeUrl: process.env.APP_A_WEB_HOME_URL ?? "http://localhost:4100",
     clientId: process.env.APP_A_CLIENT_ID ?? "app-a-client",
     redirectUri:
       process.env.APP_A_REDIRECT_URI ??
@@ -34,7 +38,7 @@ export function loadAppAConfig(): RelyingAppConfig & { port: number } {
       5,
     ),
     allowedWebOrigins: listFromEnv(process.env.APP_A_WEB_ORIGINS, [
-      "http://localhost:5173",
+      "http://localhost:4100",
     ]),
   };
 }

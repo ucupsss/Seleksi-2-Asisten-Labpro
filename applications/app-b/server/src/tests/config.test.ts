@@ -7,7 +7,7 @@ describe("app b config", () => {
 
     expect(config.appKey).toBe("app-b");
     expect(config.clientId).toBe("app-b-client");
-    expect(config.redirectUri).toBe("http://localhost:4102/auth/callback");
+    expect(config.redirectUri).toBe("http://localhost:4201/auth/callback");
     expect(config.localSessionCookieName).toBe("app_b_session");
   });
 });

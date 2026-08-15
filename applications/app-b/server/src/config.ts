@@ -15,13 +15,17 @@ export function loadAppBConfig(): RelyingAppConfig & { port: number } {
   return {
     appKey: "app-b",
     appName: "App B",
-    port: numberFromEnv(process.env.APP_B_SERVER_PORT, 4102),
-    authBaseUrl: process.env.AUTH_BASE_URL ?? "http://localhost:4000",
-    webHomeUrl: process.env.APP_B_WEB_HOME_URL ?? "http://localhost:5174",
+    port: numberFromEnv(process.env.APP_B_SERVER_PORT, 4201),
+    authBaseUrl: process.env.AUTH_BASE_URL ?? "http://localhost:4001",
+    authPublicBaseUrl:
+      process.env.AUTH_PUBLIC_BASE_URL ??
+      process.env.AUTH_BASE_URL ??
+      "http://localhost:4001",
+    webHomeUrl: process.env.APP_B_WEB_HOME_URL ?? "http://localhost:4200",
     clientId: process.env.APP_B_CLIENT_ID ?? "app-b-client",
     redirectUri:
       process.env.APP_B_REDIRECT_URI ??
-      "http://localhost:4102/auth/callback",
+      "http://localhost:4201/auth/callback",
     localSessionCookieName:
       process.env.APP_B_SESSION_COOKIE_NAME ?? "app_b_session",
     internalSecret: process.env.INTERNAL_LOGOUT_SECRET ?? "dev-internal-secret",
@@ -34,7 +38,7 @@ export function loadAppBConfig(): RelyingAppConfig & { port: number } {
       5,
     ),
     allowedWebOrigins: listFromEnv(process.env.APP_B_WEB_ORIGINS, [
-      "http://localhost:5174",
+      "http://localhost:4200",
     ]),
   };
 }

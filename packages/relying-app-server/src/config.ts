@@ -2,6 +2,7 @@ export interface RelyingAppConfig {
   appKey: string;
   appName: string;
   authBaseUrl: string;
+  authPublicBaseUrl?: string;
   webHomeUrl: string;
   clientId: string;
   redirectUri: string;
