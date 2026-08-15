@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.git/
+docs/
+docker-data/
+*.log
+.env
+.env.local
+.env.*.local

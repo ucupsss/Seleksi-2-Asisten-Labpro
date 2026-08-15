@@ -20,3 +20,6 @@ const service = createDeliveryService({
 export async function processRevocationEvent(payload: RevocationEventPayload) {
   await service.processRevocationEvent(payload);
 }
+
+console.log("SSO sync worker ready. Waiting for revocation events.");
+setInterval(() => {}, 60_000);

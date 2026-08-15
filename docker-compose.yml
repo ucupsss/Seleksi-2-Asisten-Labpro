@@ -1,0 +1,207 @@
+services:
+  auth-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sso
+      POSTGRES_PASSWORD: sso
+      POSTGRES_DB: sso_auth
+    ports:
+      - "5432:5432"
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sso -d sso_auth"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  local-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sso
+      POSTGRES_PASSWORD: sso
+      POSTGRES_DB: sso_local
+    ports:
+      - "5433:5432"
+    volumes:
+      - local-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sso -d sso_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  auth-server:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    command: >
+      sh -c "npm run db:migrate &&
+             npm run db:seed &&
+             npm run dev -w @sso/auth-server"
+    environment:
+      AUTH_DATABASE_URL: postgresql://sso:sso@auth-db:5432/sso_auth
+      LOCAL_DATABASE_URL: postgresql://sso:sso@local-db:5432/sso_local
+      AUTH_SERVER_PORT: 4001
+      AUTH_WEB_URL: http://localhost:4000
+      AUTH_WEB_ORIGINS: http://localhost:4000,http://localhost:4100,http://localhost:4200
+      COOKIE_SECRET: ${COOKIE_SECRET:-dev-cookie-secret}
+      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+    ports:
+      - "4001:4001"
+    depends_on:
+      auth-db:
+        condition: service_healthy
+      local-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  auth-web:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    command: npm run dev -w @sso/auth-web
+    environment:
+      AUTH_SERVER_URL: http://auth-server:4001
+    ports:
+      - "4000:4000"
+    depends_on:
+      auth-server:
+        condition: service_healthy
+
+  app-a-server:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    command: npm run dev -w @sso/app-a-server
+    environment:
+      LOCAL_DATABASE_URL: postgresql://sso:sso@local-db:5432/sso_local
+      APP_A_SERVER_PORT: 4101
+      AUTH_BASE_URL: http://auth-server:4001
+      AUTH_PUBLIC_BASE_URL: http://localhost:4001
+      APP_A_WEB_HOME_URL: http://localhost:4100
+      APP_A_REDIRECT_URI: http://localhost:4101/auth/callback
+      APP_A_WEB_ORIGINS: http://localhost:4100
+      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
+    ports:
+      - "4101:4101"
+    depends_on:
+      auth-server:
+        condition: service_healthy
+      local-db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4101/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  app-a-web:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    command: npm run dev -w @sso/app-a-web
+    environment:
+      APP_A_SERVER_URL: http://app-a-server:4101
+    ports:
+      - "4100:4100"
+    depends_on:
+      app-a-server:
+        condition: service_healthy
+
+  app-b-server:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    command: npm run dev -w @sso/app-b-server
+    environment:
+      LOCAL_DATABASE_URL: postgresql://sso:sso@local-db:5432/sso_local
+      APP_B_SERVER_PORT: 4201
+      AUTH_BASE_URL: http://auth-server:4001
+      AUTH_PUBLIC_BASE_URL: http://localhost:4001
+      APP_B_WEB_HOME_URL: http://localhost:4200
+      APP_B_REDIRECT_URI: http://localhost:4201/auth/callback
+      APP_B_WEB_ORIGINS: http://localhost:4200
+      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
+    ports:
+      - "4201:4201"
+    depends_on:
+      auth-server:
+        condition: service_healthy
+      local-db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4201/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  app-b-web:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    command: npm run dev -w @sso/app-b-web
+    environment:
+      APP_B_SERVER_URL: http://app-b-server:4201
+    ports:
+      - "4200:4200"
+    depends_on:
+      app-b-server:
+        condition: service_healthy
+
+  sync-worker:
+    build:
+      context: .
+      dockerfile: docker/node.Dockerfile
+    command: npm run dev -w @sso/sync-worker
+    environment:
+      AUTH_DATABASE_URL: postgresql://sso:sso@auth-db:5432/sso_auth
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
+      SSO_DELIVERY_MAX_ATTEMPTS: 3
+      SSO_DELIVERY_RETRY_DELAY_MS: 5000
+    depends_on:
+      auth-server:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  auth-db-data:
+  local-db-data:
