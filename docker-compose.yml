@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: sso
       POSTGRES_DB: sso_auth
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - auth-db-data:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +22,7 @@ services:
       POSTGRES_PASSWORD: sso
       POSTGRES_DB: sso_local
     ports:
-      - "5433:5432"
+      - "15433:5432"
     volumes:
       - local-db-data:/var/lib/postgresql/data
     healthcheck:
