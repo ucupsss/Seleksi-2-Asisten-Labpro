@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
   Separator,
@@ -101,10 +100,6 @@ export function App() {
         <div>
           <Badge variant="outline">Relying App</Badge>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight">App B</h1>
-          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            App B memakai Auth Provider yang sama dengan App A, tetapi local
-            session dan cookie-nya tetap terpisah.
-          </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={loadSession} disabled={loading}>
@@ -131,7 +126,6 @@ export function App() {
         <Card>
           <CardHeader>
             <CardTitle>Current user</CardTitle>
-            <CardDescription>Identity returned from `/session`.</CardDescription>
           </CardHeader>
           <CardContent>
             {authenticated ? (
@@ -163,7 +157,6 @@ export function App() {
         <Card>
           <CardHeader>
             <CardTitle>Local session</CardTitle>
-            <CardDescription>Status session milik App B saja.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between">
@@ -192,7 +185,6 @@ export function App() {
         <Card>
           <CardHeader>
             <CardTitle>Activity log</CardTitle>
-            <CardDescription>Aktivitas lokal akan bertambah saat server menyimpan log.</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -215,12 +207,11 @@ export function App() {
         <Card>
           <CardHeader>
             <CardTitle>Processed events</CardTitle>
-            <CardDescription>Internal logout events diproses idempotently.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-3 rounded-lg border p-4 text-sm text-muted-foreground">
               <ShieldCheck className="h-4 w-4" />
-              Event table akan terisi setelah sync worker mengirim SSO logout.
+              Event table
             </div>
           </CardContent>
         </Card>
