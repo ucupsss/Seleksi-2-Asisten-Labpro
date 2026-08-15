@@ -170,18 +170,11 @@ function LoginPage() {
           <h1 className="mt-4 max-w-xl text-4xl font-semibold tracking-tight">
             Central login for App A and App B
           </h1>
-          <p className="mt-4 max-w-xl text-muted-foreground">
-            Login ini membuat central session. App yang sudah diizinkan akan
-            menukar authorization code menjadi opaque access token.
-          </p>
         </section>
 
         <Card>
           <CardHeader>
             <CardTitle>Sign in</CardTitle>
-            <CardDescription>
-              Gunakan akun seed untuk mencoba alur SSO.
-            </CardDescription>
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={handleSubmit}>
