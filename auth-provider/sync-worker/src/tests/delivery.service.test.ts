@@ -41,6 +41,7 @@ function createRepository(deliveries: EventDeliveryJob[]) {
     [];
   const failed: Array<{ id: string; attemptCount: number }> = [];
   const processedEvents: string[] = [];
+  const deadLetteredEvents: string[] = [];
 
   const repository: DeliveryRepository = {
     listDeliveriesForEvent: async () => deliveries,
@@ -72,9 +73,19 @@ function createRepository(deliveries: EventDeliveryJob[]) {
     markEventProcessed: async (eventId) => {
       processedEvents.push(eventId);
     },
+    markEventDeadLettered: async (eventId) => {
+      deadLetteredEvents.push(eventId);
+    },
   };
 
-  return { repository, succeeded, retrying, failed, processedEvents };
+  return {
+    repository,
+    succeeded,
+    retrying,
+    failed,
+    processedEvents,
+    deadLetteredEvents,
+  };
 }
 
 function createClient(failingUrls: string[] = []) {
@@ -105,7 +116,8 @@ describe("delivery service", () => {
         },
       }),
     ];
-    const { repository, succeeded } = createRepository(deliveries);
+    const { repository, succeeded, processedEvents } =
+      createRepository(deliveries);
     const { client, calls } = createClient();
     const service = createDeliveryService({
       repository,
@@ -116,13 +128,15 @@ describe("delivery service", () => {
       now: () => new Date("2026-08-09T10:00:00.000Z"),
     });
 
-    await service.processRevocationEvent(payload);
+    const outcome = await service.processRevocationEvent(payload);
 
     expect(calls.map((call) => call.url)).toEqual([
       "http://localhost:4101/internal/logout",
       "http://localhost:4102/internal/logout",
     ]);
     expect(succeeded).toEqual(["delivery-1", "delivery-2"]);
+    expect(processedEvents).toEqual(["event-1"]);
+    expect(outcome).toBe("processed");
   });
 
   it("marks one delivery succeeded even when another fails", async () => {
@@ -149,7 +163,7 @@ describe("delivery service", () => {
       now: () => new Date("2026-08-09T10:00:00.000Z"),
     });
 
-    await service.processRevocationEvent(payload);
+    const outcome = await service.processRevocationEvent(payload);
 
     expect(succeeded).toEqual(["delivery-1"]);
     expect(retrying).toEqual([
@@ -159,11 +173,13 @@ describe("delivery service", () => {
         nextRetryAt: new Date("2026-08-09T10:00:01.000Z"),
       },
     ]);
+    expect(outcome).toBe("retry");
   });
 
   it("moves delivery to failed after max attempts", async () => {
     const deliveries = [createDelivery({ attemptCount: 2 })];
-    const { repository, failed } = createRepository(deliveries);
+    const { repository, failed, deadLetteredEvents } =
+      createRepository(deliveries);
     const { client } = createClient(["http://localhost:4101/internal/logout"]);
     const service = createDeliveryService({
       repository,
@@ -174,9 +190,49 @@ describe("delivery service", () => {
       now: () => new Date("2026-08-09T10:00:00.000Z"),
     });
 
-    await service.processRevocationEvent(payload);
+    const outcome = await service.processRevocationEvent(payload);
 
     expect(failed).toEqual([{ id: "delivery-1", attemptCount: 3 }]);
+    expect(deadLetteredEvents).toEqual(["event-1"]);
+    expect(outcome).toBe("dead_letter");
+  });
+
+  it("keeps retrying unfinished applications when another has exhausted retries", async () => {
+    const deliveries = [
+      createDelivery({ attemptCount: 2 }),
+      createDelivery({
+        id: "delivery-2",
+        applicationId: "app-2",
+        attemptCount: 0,
+        application: {
+          id: "app-2",
+          name: "App B",
+          logoutNotificationUrl: "http://localhost:4102/internal/logout",
+        },
+      }),
+    ];
+    const { repository, deadLetteredEvents } = createRepository(deliveries);
+    const { client } = createClient([
+      "http://localhost:4101/internal/logout",
+      "http://localhost:4102/internal/logout",
+    ]);
+    const service = createDeliveryService({
+      repository,
+      client,
+      internalSecret: "internal-secret",
+      maxAttempts: 3,
+      retryDelayMs: 1000,
+      now: () => new Date("2026-08-09T10:00:00.000Z"),
+    });
+
+    const outcome = await service.processRevocationEvent(payload);
+
+    expect(deliveries.map((delivery) => delivery.status)).toEqual([
+      "failed",
+      "retrying",
+    ]);
+    expect(deadLetteredEvents).toEqual([]);
+    expect(outcome).toBe("retry");
   });
 
   it("does not duplicate app processing when event already succeeded", async () => {
@@ -192,9 +248,10 @@ describe("delivery service", () => {
       now: () => new Date("2026-08-09T10:00:00.000Z"),
     });
 
-    await service.processRevocationEvent(payload);
+    const outcome = await service.processRevocationEvent(payload);
 
     expect(calls).toEqual([]);
     expect(succeeded).toEqual([]);
+    expect(outcome).toBe("processed");
   });
 });

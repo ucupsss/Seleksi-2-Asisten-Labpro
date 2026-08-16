@@ -135,14 +135,18 @@ async function main() {
     name: "App A",
     clientId: "app-a-client",
     launchUrl: "http://localhost:4100",
-    logoutNotificationUrl: "http://localhost:4101/internal/logout",
+    logoutNotificationUrl:
+      process.env.APP_A_LOGOUT_NOTIFICATION_URL ??
+      "http://localhost:4101/internal/logout",
     redirectUri: "http://localhost:4101/auth/callback",
   });
   const appB = await upsertApplication({
     name: "App B",
     clientId: "app-b-client",
     launchUrl: "http://localhost:4200",
-    logoutNotificationUrl: "http://localhost:4201/internal/logout",
+    logoutNotificationUrl:
+      process.env.APP_B_LOGOUT_NOTIFICATION_URL ??
+      "http://localhost:4201/internal/logout",
     redirectUri: "http://localhost:4201/auth/callback",
   });
 

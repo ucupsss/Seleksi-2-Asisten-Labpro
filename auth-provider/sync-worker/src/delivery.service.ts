@@ -40,6 +40,7 @@ export interface DeliveryRepository {
     lastError: string;
   }): Promise<void>;
   markEventProcessed(eventId: string, processedAt: Date): Promise<void>;
+  markEventDeadLettered(eventId: string): Promise<void>;
 }
 
 export interface InternalLogoutClient {
@@ -50,8 +51,12 @@ export interface InternalLogoutClient {
   ): Promise<void>;
 }
 
+export type DeliveryOutcome = "processed" | "retry" | "dead_letter";
+
 export interface DeliveryService {
-  processRevocationEvent(payload: RevocationEventPayload): Promise<void>;
+  processRevocationEvent(
+    payload: RevocationEventPayload,
+  ): Promise<DeliveryOutcome>;
 }
 
 export interface DeliveryServiceDependencies {
@@ -120,14 +125,24 @@ export function createDeliveryService(
 
       const remainingDeliveries =
         await deps.repository.listDeliveriesForEvent(payload.eventId);
-      const allTerminal = remainingDeliveries.every(
-        (delivery) =>
-          delivery.status === "succeeded" || delivery.status === "failed",
-      );
-
-      if (allTerminal) {
-        await deps.repository.markEventProcessed(payload.eventId, now());
+      if (
+        remainingDeliveries.some(
+          (delivery) =>
+            delivery.status !== "succeeded" && delivery.status !== "failed",
+        )
+      ) {
+        return "retry";
       }
+
+      if (
+        remainingDeliveries.some((delivery) => delivery.status === "failed")
+      ) {
+        await deps.repository.markEventDeadLettered(payload.eventId);
+        return "dead_letter";
+      }
+
+      await deps.repository.markEventProcessed(payload.eventId, now());
+      return "processed";
     },
   };
 }
@@ -216,13 +231,19 @@ export function createPrismaDeliveryRepository(
       });
     },
 
-    async markEventProcessed(eventId, processedAt) {
+    async markEventProcessed(eventId, _processedAt) {
       await prisma.event.update({
         where: { id: eventId },
         data: {
           status: "processed",
-          publishedAt: processedAt,
         },
+      });
+    },
+
+    async markEventDeadLettered(eventId) {
+      await prisma.event.update({
+        where: { id: eventId },
+        data: { status: "dead_lettered" },
       });
     },
   };

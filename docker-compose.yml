@@ -59,6 +59,8 @@ services:
       COOKIE_SECRET: ${COOKIE_SECRET:-dev-cookie-secret}
       INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      APP_A_LOGOUT_NOTIFICATION_URL: http://app-a-server:4101/internal/logout
+      APP_B_LOGOUT_NOTIFICATION_URL: http://app-b-server:4201/internal/logout
     ports:
       - "4001:4001"
     depends_on:
@@ -193,9 +195,14 @@ services:
     environment:
       AUTH_DATABASE_URL: postgresql://sso:sso@auth-db:5432/sso_auth
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_REVOCATION_QUEUE: sso.revocations
+      RABBITMQ_REVOCATION_RETRY_QUEUE: sso.revocations.retry
+      RABBITMQ_REVOCATION_DLQ: sso.revocations.dlq
       INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
       SSO_DELIVERY_MAX_ATTEMPTS: 3
       SSO_DELIVERY_RETRY_DELAY_MS: 5000
+      SSO_OUTBOX_POLL_INTERVAL_MS: 1000
+    restart: unless-stopped
     depends_on:
       auth-server:
         condition: service_healthy
