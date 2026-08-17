@@ -76,8 +76,38 @@ function createRepository() {
       groups: string[];
     }
   >();
+  const issuedTokens: string[] = [];
+  let transactionQueue = Promise.resolve();
 
   const repository: OauthRepository = {
+    async withTransaction(work) {
+      const previousTransaction = transactionQueue;
+      let releaseTransaction = () => {};
+      transactionQueue = new Promise<void>((resolve) => {
+        releaseTransaction = resolve;
+      });
+      await previousTransaction;
+
+      const usedAtSnapshot = new Map(
+        [...codes].map(([hash, code]) => [hash, code.usedAt]),
+      );
+      const tokenSnapshot = new Map(tokens);
+      const issuedTokenCount = issuedTokens.length;
+      try {
+        return await work(repository);
+      } catch (error) {
+        for (const [hash, usedAt] of usedAtSnapshot) {
+          const code = codes.get(hash);
+          if (code) code.usedAt = usedAt;
+        }
+        tokens.clear();
+        for (const [hash, token] of tokenSnapshot) tokens.set(hash, token);
+        issuedTokens.length = issuedTokenCount;
+        throw error;
+      } finally {
+        releaseTransaction();
+      }
+    },
     createAuthorizationCode: async (input) => {
       const code = {
         id: "code-1",
@@ -102,12 +132,14 @@ function createRepository() {
       return code;
     },
     findAuthorizationCodeByHash: async (codeHash) => codes.get(codeHash) ?? null,
-    markAuthorizationCodeUsed: async (id, usedAt) => {
+    consumeAuthorizationCode: async (id, usedAt) => {
       for (const code of codes.values()) {
-        if (code.id === id) {
+        if (code.id === id && code.usedAt === null) {
           code.usedAt = usedAt;
+          return true;
         }
       }
+      return false;
     },
     createAccessToken: async (input) => {
       const token = {
@@ -128,6 +160,7 @@ function createRepository() {
         groups: ["app-a-users"],
       };
       tokens.set(input.tokenHash, token);
+      issuedTokens.push(input.tokenHash);
       return token;
     },
     findAccessTokenByHash: async (tokenHash) => tokens.get(tokenHash) ?? null,
@@ -135,7 +168,7 @@ function createRepository() {
     createAuditLog: async () => {},
   };
 
-  return { repository, codes, tokens };
+  return { repository, codes, tokens, issuedTokens };
 }
 
 function createService(repository: OauthRepository) {
@@ -226,6 +259,73 @@ describe("oauth service", () => {
         codeVerifier: "verifier-1",
       }),
     ).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it("allows only one token when the same code is exchanged concurrently", async () => {
+    const { repository, issuedTokens } = createRepository();
+    const service = createService(repository);
+
+    await service.createAuthorizationCode({
+      userId: "user-1",
+      ssoSessionId: "session-1",
+      clientId: "app-a-client",
+      redirectUri: "http://localhost:4101/auth/callback",
+      state: "state-1",
+      codeChallenge: s256("verifier-1"),
+    });
+    const exchange = () =>
+      service.exchangeAuthorizationCode({
+        code: "raw-code",
+        clientId: "app-a-client",
+        redirectUri: "http://localhost:4101/auth/callback",
+        codeVerifier: "verifier-1",
+      });
+
+    const results = await Promise.allSettled([exchange(), exchange()]);
+
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
+    expect(issuedTokens).toHaveLength(1);
+  });
+
+  it("rolls back code consumption when token issuance fails", async () => {
+    const { repository, codes } = createRepository();
+    const service = createService(repository);
+    const createAccessToken = repository.createAccessToken;
+    let shouldFail = true;
+    repository.createAccessToken = async (input) => {
+      if (shouldFail) {
+        shouldFail = false;
+        throw new Error("token insert failed");
+      }
+      return createAccessToken(input);
+    };
+
+    await service.createAuthorizationCode({
+      userId: "user-1",
+      ssoSessionId: "session-1",
+      clientId: "app-a-client",
+      redirectUri: "http://localhost:4101/auth/callback",
+      state: "state-1",
+      codeChallenge: s256("verifier-1"),
+    });
+    const exchange = () =>
+      service.exchangeAuthorizationCode({
+        code: "raw-code",
+        clientId: "app-a-client",
+        redirectUri: "http://localhost:4101/auth/callback",
+        codeVerifier: "verifier-1",
+      });
+
+    await expect(exchange()).rejects.toThrow("token insert failed");
+    expect([...codes.values()][0]?.usedAt).toBeNull();
+    await expect(exchange()).resolves.toMatchObject({
+      access_token: "raw-access-token",
+    });
   });
 
   it("rejects invalid pkce verifier", async () => {

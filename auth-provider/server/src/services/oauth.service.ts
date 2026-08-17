@@ -56,6 +56,9 @@ export interface AccessTokenRecord {
 }
 
 export interface OauthRepository {
+  withTransaction<T>(
+    work: (repository: OauthRepository) => Promise<T>,
+  ): Promise<T>;
   createAuthorizationCode(input: {
     codeHash: string;
     userId: string;
@@ -68,7 +71,7 @@ export interface OauthRepository {
   findAuthorizationCodeByHash(
     codeHash: string,
   ): Promise<AuthorizationCodeRecord | null>;
-  markAuthorizationCodeUsed(id: string, usedAt: Date): Promise<void>;
+  consumeAuthorizationCode(id: string, usedAt: Date): Promise<boolean>;
   createAccessToken(input: {
     tokenHash: string;
     userId: string;
@@ -190,63 +193,71 @@ export function createOauthService(deps: OauthServiceDependencies): OauthService
     },
 
     async exchangeAuthorizationCode(input) {
-      const code = await deps.repository.findAuthorizationCodeByHash(
-        sha256Hex(input.code),
-      );
-      const currentTime = now();
+      return deps.repository.withTransaction(async (repository) => {
+        const code = await repository.findAuthorizationCodeByHash(
+          sha256Hex(input.code),
+        );
+        const currentTime = now();
 
-      if (!code) {
-        throw invalidGrant();
-      }
+        if (!code) {
+          throw invalidGrant();
+        }
 
-      if (code.usedAt) {
-        throw invalidGrant("Authorization code sudah digunakan");
-      }
+        if (code.usedAt) {
+          throw invalidGrant("Authorization code sudah digunakan");
+        }
 
-      if (code.expiresAt.getTime() <= currentTime.getTime()) {
-        throw invalidGrant("Authorization code kedaluwarsa");
-      }
+        if (code.expiresAt.getTime() <= currentTime.getTime()) {
+          throw invalidGrant("Authorization code kedaluwarsa");
+        }
 
-      if (code.application.clientId !== input.clientId) {
-        throw invalidGrant();
-      }
+        if (code.application.clientId !== input.clientId) {
+          throw invalidGrant();
+        }
 
-      if (code.redirectUri !== input.redirectUri) {
-        throw invalidGrant();
-      }
+        if (code.redirectUri !== input.redirectUri) {
+          throw invalidGrant();
+        }
 
-      if (code.codeChallenge !== createPkceChallenge(input.codeVerifier)) {
-        throw invalidGrant();
-      }
+        if (code.codeChallenge !== createPkceChallenge(input.codeVerifier)) {
+          throw invalidGrant();
+        }
 
-      if (!sessionIsActive(code.ssoSession, currentTime)) {
-        throw invalidGrant("Central session tidak valid");
-      }
+        if (!sessionIsActive(code.ssoSession, currentTime)) {
+          throw invalidGrant("Central session tidak valid");
+        }
 
-      await deps.repository.markAuthorizationCodeUsed(code.id, currentTime);
+        const consumed = await repository.consumeAuthorizationCode(
+          code.id,
+          currentTime,
+        );
+        if (!consumed) {
+          throw invalidGrant("Authorization code sudah digunakan");
+        }
 
-      const accessToken = generateToken();
-      await deps.repository.createAccessToken({
-        tokenHash: sha256Hex(accessToken),
-        userId: code.userId,
-        applicationId: code.applicationId,
-        ssoSessionId: code.ssoSessionId,
-        expiresAt: addMinutes(currentTime, deps.accessTokenTtlMinutes),
+        const accessToken = generateToken();
+        await repository.createAccessToken({
+          tokenHash: sha256Hex(accessToken),
+          userId: code.userId,
+          applicationId: code.applicationId,
+          ssoSessionId: code.ssoSessionId,
+          expiresAt: addMinutes(currentTime, deps.accessTokenTtlMinutes),
+        });
+
+        await repository.createAuditLog({
+          eventType: "token_issued",
+          result: "success",
+          userId: code.userId,
+          applicationId: code.applicationId,
+          sessionId: code.ssoSessionId,
+        });
+
+        return {
+          access_token: accessToken,
+          token_type: "Bearer" as const,
+          expires_in: deps.accessTokenTtlMinutes * 60,
+        };
       });
-
-      await deps.repository.createAuditLog({
-        eventType: "token_issued",
-        result: "success",
-        userId: code.userId,
-        applicationId: code.applicationId,
-        sessionId: code.ssoSessionId,
-      });
-
-      return {
-        access_token: accessToken,
-        token_type: "Bearer",
-        expires_in: deps.accessTokenTtlMinutes * 60,
-      };
     },
 
     async getUserInfo(accessToken) {
@@ -285,9 +296,17 @@ export function createOauthService(deps: OauthServiceDependencies): OauthService
 }
 
 export function createPrismaOauthRepository(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
 ): OauthRepository {
-  return {
+  const repository: OauthRepository = {
+    async withTransaction(work) {
+      if (!("$transaction" in prisma)) {
+        return work(repository);
+      }
+      return prisma.$transaction((transaction) =>
+        work(createPrismaOauthRepository(transaction)),
+      );
+    },
     async createAuthorizationCode(input) {
       return prisma.authorizationCode.create({
         data: input,
@@ -310,11 +329,12 @@ export function createPrismaOauthRepository(
       });
     },
 
-    async markAuthorizationCodeUsed(id, usedAt) {
-      await prisma.authorizationCode.update({
-        where: { id },
+    async consumeAuthorizationCode(id, usedAt) {
+      const result = await prisma.authorizationCode.updateMany({
+        where: { id, usedAt: null },
         data: { usedAt },
       });
+      return result.count === 1;
     },
 
     async createAccessToken(input) {
@@ -360,4 +380,6 @@ export function createPrismaOauthRepository(
       });
     },
   };
+
+  return repository;
 }
