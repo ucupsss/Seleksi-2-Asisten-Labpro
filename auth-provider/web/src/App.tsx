@@ -28,6 +28,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   Users,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -72,10 +73,23 @@ interface EventLog {
   createdAt: string;
 }
 
+interface Membership {
+  userId: string;
+  groupId: string;
+}
+
+interface ApplicationPolicy {
+  applicationId: string;
+  groupId: string;
+  effect: "allow";
+}
+
 interface AdminState {
   users: User[];
   groups: Group[];
   applications: Application[];
+  memberships: Membership[];
+  policies: ApplicationPolicy[];
   auditLogs: AuditLog[];
   events: EventLog[];
 }
@@ -84,6 +98,8 @@ const emptyAdminState: AdminState = {
   users: [],
   groups: [],
   applications: [],
+  memberships: [],
+  policies: [],
   auditLogs: [],
   events: [],
 };
@@ -229,27 +245,46 @@ function AdminPage() {
     applicationId: "",
     groupId: "",
   });
+  const [membershipForm, setMembershipForm] = useState({
+    userId: "",
+    groupId: "",
+  });
 
   const policyRows = useMemo(() => {
-    if (!policyForm.applicationId || !policyForm.groupId) return [];
-    const app = state.applications.find(
-      (candidate) => candidate.id === policyForm.applicationId,
-    );
-    const group = state.groups.find(
-      (candidate) => candidate.id === policyForm.groupId,
-    );
-    return app && group ? [{ appName: app.name, groupName: group.name }] : [];
-  }, [policyForm, state.applications, state.groups]);
+    return state.policies.map((policy) => ({
+      ...policy,
+      appName:
+        state.applications.find((app) => app.id === policy.applicationId)
+          ?.name ?? policy.applicationId,
+      groupName:
+        state.groups.find((group) => group.id === policy.groupId)?.name ??
+        policy.groupId,
+    }));
+  }, [state.applications, state.groups, state.policies]);
+
+  const membershipRows = useMemo(() => {
+    return state.memberships.map((membership) => ({
+      ...membership,
+      userName:
+        state.users.find((user) => user.id === membership.userId)?.name ??
+        membership.userId,
+      groupName:
+        state.groups.find((group) => group.id === membership.groupId)?.name ??
+        membership.groupId,
+    }));
+  }, [state.groups, state.memberships, state.users]);
 
   async function loadAdminData() {
     setLoading(true);
     setError(null);
     try {
-      const [users, groups, applications, auditLogs, events] =
+      const [users, groups, applications, memberships, policies, auditLogs, events] =
         await Promise.all([
           apiJson<{ users: User[] }>("/admin/users"),
           apiJson<{ groups: Group[] }>("/admin/groups"),
           apiJson<{ applications: Application[] }>("/admin/applications"),
+          apiJson<{ memberships: Membership[] }>("/admin/memberships"),
+          apiJson<{ policies: ApplicationPolicy[] }>("/admin/policies"),
           apiJson<{ auditLogs: AuditLog[] }>("/admin/audit-logs"),
           apiJson<{ events: EventLog[] }>("/admin/events"),
         ]);
@@ -257,6 +292,8 @@ function AdminPage() {
         users: users.users,
         groups: groups.groups,
         applications: applications.applications,
+        memberships: memberships.memberships,
+        policies: policies.policies,
         auditLogs: auditLogs.auditLogs,
         events: events.events,
       });
@@ -318,6 +355,41 @@ function AdminPage() {
     await loadAdminData();
   }
 
+  async function toggleUserStatus(user: User) {
+    await apiJson(`/admin/users/${user.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: user.status === "active" ? "inactive" : "active",
+      }),
+    });
+    await loadAdminData();
+  }
+
+  async function createMembership(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await apiJson(`/admin/groups/${membershipForm.groupId}/users`, {
+      method: "POST",
+      body: JSON.stringify({ userId: membershipForm.userId }),
+    });
+    await loadAdminData();
+  }
+
+  async function removeMembership(membership: Membership) {
+    await apiJson(
+      `/admin/groups/${membership.groupId}/users/${membership.userId}`,
+      { method: "DELETE" },
+    );
+    await loadAdminData();
+  }
+
+  async function removePolicy(policy: ApplicationPolicy) {
+    await apiJson(
+      `/admin/applications/${policy.applicationId}/policies/${policy.groupId}`,
+      { method: "DELETE" },
+    );
+    await loadAdminData();
+  }
+
   return (
     <main className="mx-auto min-h-[100dvh] max-w-7xl px-4 py-6">
       <header className="flex flex-col gap-4 border-b pb-5 md:flex-row md:items-center md:justify-between">
@@ -368,6 +440,7 @@ function AdminPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -379,6 +452,15 @@ function AdminPage() {
                           <Badge variant={user.status === "active" ? "success" : "warning"}>
                             {user.status}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void toggleUserStatus(user)}
+                          >
+                            {user.status === "active" ? "Deactivate" : "Activate"}
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -406,7 +488,7 @@ function AdminPage() {
         </TabsContent>
 
         <TabsContent value="groups">
-          <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+          <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
                 <CardTitle>Groups</CardTitle>
@@ -444,6 +526,41 @@ function AdminPage() {
                     Create group
                   </Button>
                 </form>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Memberships</CardTitle>
+                <CardDescription>Assign users to access groups.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <form className="grid gap-3" onSubmit={createMembership}>
+                  <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={membershipForm.userId} onChange={(event) => setMembershipForm({ ...membershipForm, userId: event.target.value })}>
+                    <option value="">Select user</option>
+                    {state.users.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                  </select>
+                  <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={membershipForm.groupId} onChange={(event) => setMembershipForm({ ...membershipForm, groupId: event.target.value })}>
+                    <option value="">Select group</option>
+                    {state.groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                  </select>
+                  <Button disabled={!membershipForm.userId || !membershipForm.groupId}>
+                    <Plus className="h-4 w-4" /> Add membership
+                  </Button>
+                </form>
+                <Table>
+                  <TableHeader><TableRow><TableHead>User</TableHead><TableHead>Group</TableHead><TableHead /></TableRow></TableHeader>
+                  <TableBody>
+                    {membershipRows.map((membership) => (
+                      <TableRow key={`${membership.userId}-${membership.groupId}`}>
+                        <TableCell>{membership.userName}</TableCell>
+                        <TableCell>{membership.groupName}</TableCell>
+                        <TableCell className="text-right">
+                          <Button size="sm" variant="ghost" aria-label="Remove membership" onClick={() => void removeMembership(membership)}><Trash2 className="h-4 w-4" /></Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </div>
@@ -511,21 +628,25 @@ function AdminPage() {
                       <TableHead>Application</TableHead>
                       <TableHead>Group</TableHead>
                       <TableHead>Effect</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {policyRows.length ? (
                       policyRows.map((row) => (
-                        <TableRow key={`${row.appName}-${row.groupName}`}>
+                        <TableRow key={`${row.applicationId}-${row.groupId}`}>
                           <TableCell>{row.appName}</TableCell>
                           <TableCell>{row.groupName}</TableCell>
                           <TableCell><Badge variant="success">allow</Badge></TableCell>
+                          <TableCell className="text-right">
+                            <Button size="sm" variant="ghost" aria-label="Remove policy" onClick={() => void removePolicy(row)}><Trash2 className="h-4 w-4" /></Button>
+                          </TableCell>
                         </TableRow>
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={3} className="text-muted-foreground">
-                          Select an application and group to create an allow policy.
+                        <TableCell colSpan={4} className="text-muted-foreground">
+                          No allow policies configured.
                         </TableCell>
                       </TableRow>
                     )}

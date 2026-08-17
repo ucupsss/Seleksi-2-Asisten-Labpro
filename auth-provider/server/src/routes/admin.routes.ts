@@ -132,6 +132,30 @@ export function createAdminRoutes(adminService: AdminService) {
     }
   });
 
+  router.get("/admin/memberships", async (_req, res, next) => {
+    try {
+      const memberships = await adminService.listMemberships();
+      res.json({ memberships });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete(
+    "/admin/groups/:groupId/users/:userId",
+    async (req, res, next) => {
+      try {
+        await adminService.removeUserFromGroup({
+          userId: req.params.userId,
+          groupId: req.params.groupId,
+        });
+        res.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
   router.get("/admin/applications", async (_req, res, next) => {
     try {
       const applications = await adminService.listApplications();
@@ -173,6 +197,30 @@ export function createAdminRoutes(adminService: AdminService) {
       next(error);
     }
   });
+
+  router.get("/admin/policies", async (_req, res, next) => {
+    try {
+      const policies = await adminService.listApplicationPolicies();
+      res.json({ policies });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete(
+    "/admin/applications/:applicationId/policies/:groupId",
+    async (req, res, next) => {
+      try {
+        await adminService.removeApplicationPolicy({
+          applicationId: req.params.applicationId,
+          groupId: req.params.groupId,
+        });
+        res.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
 
   router.get("/admin/audit-logs", async (_req, res, next) => {
     try {

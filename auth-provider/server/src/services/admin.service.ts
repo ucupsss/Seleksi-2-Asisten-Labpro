@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcrypt";
 import type { RevocationEventPayload } from "@sso/shared";
-import type {
+import {
   Prisma,
-  PrismaClient,
+  type PrismaClient,
 } from "../../../../node_modules/.prisma/auth-client/index.js";
 import { HttpError, notFoundError } from "../errors.js";
 
@@ -55,11 +55,24 @@ export interface EventSummary {
   createdAt: Date;
 }
 
+export interface MembershipSummary {
+  userId: string;
+  groupId: string;
+}
+
+export interface ApplicationPolicySummary {
+  applicationId: string;
+  groupId: string;
+  effect: "allow";
+}
+
 export interface AdminRepository {
   withTransaction<T>(
     work: (repository: AdminRepository) => Promise<T>,
+    options?: { isolationLevel?: "Serializable" },
   ): Promise<T>;
   listUsers(): Promise<AdminUserRecord[]>;
+  findUserById(id: string): Promise<AdminUserRecord | null>;
   findUserByEmail(email: string): Promise<AdminUserRecord | null>;
   createUser(input: {
     name: string;
@@ -80,7 +93,7 @@ export interface AdminRepository {
     userId: string,
     reason: string,
     revokedAt: Date,
-  ): Promise<void>;
+  ): Promise<string[]>;
   listGroups(): Promise<GroupSummary[]>;
   findGroupByName(name: string): Promise<GroupSummary | null>;
   createGroup(input: {
@@ -88,6 +101,11 @@ export interface AdminRepository {
     description?: string | null;
   }): Promise<GroupSummary>;
   addUserToGroup(userId: string, groupId: string): Promise<void>;
+  removeUserFromGroup(userId: string, groupId: string): Promise<void>;
+  listMemberships(): Promise<MembershipSummary[]>;
+  listAccessibleApplicationsForUser(
+    userId: string,
+  ): Promise<ApplicationSummary[]>;
   listApplications(): Promise<ApplicationSummary[]>;
   findApplicationByClientId(
     clientId: string,
@@ -101,6 +119,17 @@ export interface AdminRepository {
     redirectUri: string;
   }): Promise<ApplicationSummary>;
   addApplicationPolicy(applicationId: string, groupId: string): Promise<void>;
+  removeApplicationPolicy(
+    applicationId: string,
+    groupId: string,
+  ): Promise<void>;
+  listApplicationPolicies(): Promise<ApplicationPolicySummary[]>;
+  listUsersWithAccessToApplication(applicationId: string): Promise<string[]>;
+  revokeAccessTokensForUserApplication(
+    userId: string,
+    applicationId: string,
+    revokedAt: Date,
+  ): Promise<void>;
   createAuditLog(input: {
     eventType: string;
     result: "success" | "failed";
@@ -112,6 +141,8 @@ export interface AdminRepository {
     id: string;
     eventType: string;
     userId: string;
+    centralSessionId?: string | null;
+    applicationId?: string | null;
     payload: RevocationEventPayload;
   }): Promise<void>;
   createEventDelivery(input: {
@@ -157,12 +188,19 @@ export interface AdminService {
   listGroups(): Promise<GroupSummary[]>;
   createGroup(input: CreateGroupInput): Promise<GroupSummary>;
   addUserToGroup(input: { userId: string; groupId: string }): Promise<void>;
+  removeUserFromGroup(input: { userId: string; groupId: string }): Promise<void>;
+  listMemberships(): Promise<MembershipSummary[]>;
   listApplications(): Promise<ApplicationSummary[]>;
   createApplication(input: CreateApplicationInput): Promise<ApplicationSummary>;
   addApplicationPolicy(input: {
     applicationId: string;
     groupId: string;
   }): Promise<void>;
+  removeApplicationPolicy(input: {
+    applicationId: string;
+    groupId: string;
+  }): Promise<void>;
+  listApplicationPolicies(): Promise<ApplicationPolicySummary[]>;
   listAuditLogs(): Promise<AuditLogSummary[]>;
   listEvents(): Promise<EventSummary[]>;
 }
@@ -191,6 +229,80 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
   const hashPassword = deps.hashPassword ?? ((plain) => bcrypt.hash(plain, 12));
   const now = deps.now ?? (() => new Date());
   const generateEventId = deps.generateEventId ?? (() => randomUUID());
+
+  async function withSerializableRetry<T>(
+    work: (repository: AdminRepository) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return await deps.repository.withTransaction(work, {
+          isolationLevel: "Serializable",
+        });
+      } catch (error) {
+        const isWriteConflict =
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "P2034";
+        if (!isWriteConflict || attempt === 3) throw error;
+      }
+    }
+    throw new Error("Serializable transaction retry exhausted");
+  }
+
+  async function createEventWithDeliveries(
+    repository: AdminRepository,
+    payload: RevocationEventPayload,
+    applicationIds: string[],
+  ) {
+    await repository.createEvent({
+      id: payload.eventId,
+      eventType: payload.eventType,
+      userId: payload.userId,
+      centralSessionId: payload.centralSessionId,
+      applicationId: payload.applicationId,
+      payload,
+    });
+    await Promise.all(
+      applicationIds.map((applicationId) =>
+        repository.createEventDelivery({
+          eventId: payload.eventId,
+          applicationId,
+        }),
+      ),
+    );
+  }
+
+  async function createAccessPolicyChangedEvent(
+    repository: AdminRepository,
+    input: {
+      userId: string;
+      applicationId: string;
+      groupId: string;
+      reason: "group_membership_removed" | "application_policy_removed";
+      occurredAt: Date;
+    },
+  ) {
+    await repository.revokeAccessTokensForUserApplication(
+      input.userId,
+      input.applicationId,
+      input.occurredAt,
+    );
+    const payload: RevocationEventPayload = {
+      eventId: generateEventId(),
+      eventType: "AccessPolicyChanged",
+      userId: input.userId,
+      centralSessionId: null,
+      applicationId: input.applicationId,
+      reason: input.reason,
+      occurredAt: input.occurredAt.toISOString(),
+      metadata: {
+        groupId: input.groupId,
+        applicationId: input.applicationId,
+      },
+    };
+    await createEventWithDeliveries(repository, payload, [input.applicationId]);
+  }
 
   return {
     async listUsers() {
@@ -225,7 +337,14 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
       const passwordHash = input.password
         ? await hashPassword(input.password)
         : undefined;
-      return deps.repository.withTransaction(async (repository) => {
+      return withSerializableRetry(async (repository) => {
+        const existingUser = await repository.findUserById(id);
+        if (!existingUser) {
+          throw notFoundError();
+        }
+        const deactivating =
+          existingUser.status === "active" && input.status === "inactive";
+        const reconcilingInactive = input.status === "inactive";
         const user = await repository.updateUser(id, {
           name: input.name,
           email: input.email,
@@ -233,45 +352,54 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
           status: input.status,
         });
 
-        if (!user) {
-          throw notFoundError();
-        }
+        if (!user) throw notFoundError();
 
-        if (passwordHash) {
+        if (passwordHash || reconcilingInactive) {
           const occurredAt = now();
-          const eventId = generateEventId();
-          await repository.revokeActiveSessionsForUser(
+          const revokedSessionIds = await repository.revokeActiveSessionsForUser(
             user.id,
-            "password_changed",
+            reconcilingInactive ? "user_deactivated" : "password_changed",
             occurredAt,
           );
-          const applications = (await repository.listApplications()).filter(
-            (application) => application.status === "active",
+          const applicationIds = (await repository.listApplications()).map(
+            (application) => application.id,
           );
-          const payload: RevocationEventPayload = {
-            eventId,
-            eventType: "PasswordChanged",
-            userId: user.id,
-            centralSessionId: null,
-            applicationId: null,
-            reason: "password_changed",
-            occurredAt: occurredAt.toISOString(),
-            metadata: {},
-          };
-          await repository.createEvent({
-            id: eventId,
-            eventType: "PasswordChanged",
-            userId: user.id,
-            payload,
-          });
-          await Promise.all(
-            applications.map((application) =>
-              repository.createEventDelivery({
-                eventId,
-                applicationId: application.id,
-              }),
-            ),
-          );
+
+          if (passwordHash) {
+            await createEventWithDeliveries(
+              repository,
+              {
+                eventId: generateEventId(),
+                eventType: "PasswordChanged",
+                userId: user.id,
+                centralSessionId: null,
+                applicationId: null,
+                reason: "password_changed",
+                occurredAt: occurredAt.toISOString(),
+                metadata: {},
+              },
+              applicationIds,
+            );
+          }
+
+          if (reconcilingInactive) {
+            for (const centralSessionId of revokedSessionIds) {
+              await createEventWithDeliveries(
+                repository,
+                {
+                  eventId: generateEventId(),
+                  eventType: "SessionRevoked",
+                  userId: user.id,
+                  centralSessionId,
+                  applicationId: null,
+                  reason: "user_deactivated",
+                  occurredAt: occurredAt.toISOString(),
+                  metadata: { source: "admin" },
+                },
+                applicationIds,
+              );
+            }
+          }
         }
 
         await repository.createAuditLog({
@@ -314,6 +442,50 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
       });
     },
 
+    async removeUserFromGroup(input) {
+      await withSerializableRetry(async (repository) => {
+        const before = await repository.listAccessibleApplicationsForUser(
+          input.userId,
+        );
+        await repository.removeUserFromGroup(input.userId, input.groupId);
+        const afterIds = new Set(
+          (await repository.listAccessibleApplicationsForUser(input.userId)).map(
+            (application) => application.id,
+          ),
+        );
+        const lostApplications = before.filter(
+          (application) => !afterIds.has(application.id),
+        );
+        const occurredAt = now();
+        if (lostApplications.length > 0) {
+          await repository.revokeActiveSessionsForUser(
+            input.userId,
+            "access_policy_changed",
+            occurredAt,
+          );
+        }
+        for (const application of lostApplications) {
+            await createAccessPolicyChangedEvent(repository, {
+              userId: input.userId,
+              applicationId: application.id,
+              groupId: input.groupId,
+              reason: "group_membership_removed",
+              occurredAt,
+            });
+        }
+        await repository.createAuditLog({
+          eventType: "admin_user_group_removed",
+          result: "success",
+          userId: input.userId,
+          metadata: { groupId: input.groupId },
+        });
+      });
+    },
+
+    async listMemberships() {
+      return deps.repository.listMemberships();
+    },
+
     async listApplications() {
       return deps.repository.listApplications();
     },
@@ -346,6 +518,48 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
         applicationId: input.applicationId,
         metadata: { groupId: input.groupId, effect: "allow" },
       });
+    },
+
+    async removeApplicationPolicy(input) {
+      await withSerializableRetry(async (repository) => {
+        const before = await repository.listUsersWithAccessToApplication(
+          input.applicationId,
+        );
+        await repository.removeApplicationPolicy(
+          input.applicationId,
+          input.groupId,
+        );
+        const afterIds = new Set(
+          await repository.listUsersWithAccessToApplication(input.applicationId),
+        );
+        const occurredAt = now();
+        for (const userId of before) {
+          if (!afterIds.has(userId)) {
+            await repository.revokeActiveSessionsForUser(
+              userId,
+              "access_policy_changed",
+              occurredAt,
+            );
+            await createAccessPolicyChangedEvent(repository, {
+              userId,
+              applicationId: input.applicationId,
+              groupId: input.groupId,
+              reason: "application_policy_removed",
+              occurredAt,
+            });
+          }
+        }
+        await repository.createAuditLog({
+          eventType: "admin_application_policy_removed",
+          result: "success",
+          applicationId: input.applicationId,
+          metadata: { groupId: input.groupId, effect: "allow" },
+        });
+      });
+    },
+
+    async listApplicationPolicies() {
+      return deps.repository.listApplicationPolicies();
     },
 
     async listAuditLogs() {
@@ -382,19 +596,26 @@ export function createPrismaAdminRepository(
   prisma: PrismaClient | Prisma.TransactionClient,
 ): AdminRepository {
   const repository: AdminRepository = {
-    async withTransaction(work) {
+    async withTransaction(work, options) {
       if (!("$transaction" in prisma)) {
         return work(repository);
       }
 
-      return prisma.$transaction(async (transaction) =>
-        work(createPrismaAdminRepository(transaction)),
+      return prisma.$transaction(
+        async (transaction) => work(createPrismaAdminRepository(transaction)),
+        options?.isolationLevel
+          ? { isolationLevel: options.isolationLevel }
+          : undefined,
       );
     },
     async listUsers() {
       return prisma.user.findMany({
         orderBy: { createdAt: "asc" },
       });
+    },
+
+    async findUserById(id) {
+      return prisma.user.findUnique({ where: { id } });
     },
 
     async findUserByEmail(email) {
@@ -448,18 +669,17 @@ export function createPrismaAdminRepository(
           revokedAt,
         },
       });
-      await prisma.ssoSession.updateMany({
-        where: {
-          userId,
-          status: "active",
-          revokedAt: null,
-        },
-        data: {
-          status: "revoked",
-          revokedAt,
-          revokeReason: reason,
-        },
-      });
+      const sessions = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        UPDATE "SsoSession"
+        SET "status" = 'revoked',
+            "revokedAt" = ${revokedAt},
+            "revokeReason" = ${reason}
+        WHERE "userId" = ${userId}
+          AND "status" = 'active'
+          AND "revokedAt" IS NULL
+        RETURNING "id"
+      `);
+      return sessions.map((session) => session.id);
     },
 
     async listGroups() {
@@ -495,6 +715,38 @@ export function createPrismaAdminRepository(
         },
         update: {},
       });
+    },
+
+    async removeUserFromGroup(userId, groupId) {
+      await prisma.userGroup.deleteMany({ where: { userId, groupId } });
+    },
+
+    async listMemberships() {
+      return prisma.userGroup.findMany({
+        select: { userId: true, groupId: true },
+        orderBy: [{ userId: "asc" }, { groupId: "asc" }],
+      });
+    },
+
+    async listAccessibleApplicationsForUser(userId) {
+      const applications = await prisma.application.findMany({
+        where: {
+          status: "active",
+          policies: {
+            some: {
+              effect: "allow",
+              group: {
+                users: {
+                  some: { userId, user: { status: "active" } },
+                },
+              },
+            },
+          },
+        },
+        include: { redirectUris: true },
+        orderBy: { createdAt: "asc" },
+      });
+      return applications.map(toApplicationSummary);
     },
 
     async listApplications() {
@@ -550,6 +802,59 @@ export function createPrismaAdminRepository(
       });
     },
 
+    async removeApplicationPolicy(applicationId, groupId) {
+      await prisma.applicationGroupPolicy.deleteMany({
+        where: { applicationId, groupId, effect: "allow" },
+      });
+    },
+
+    async listApplicationPolicies() {
+      return prisma.applicationGroupPolicy.findMany({
+        select: { applicationId: true, groupId: true, effect: true },
+        orderBy: [{ applicationId: "asc" }, { groupId: "asc" }],
+      });
+    },
+
+    async listUsersWithAccessToApplication(applicationId) {
+      const users = await prisma.user.findMany({
+        where: {
+          status: "active",
+          groups: {
+            some: {
+              group: {
+                policies: {
+                  some: {
+                    applicationId,
+                    effect: "allow",
+                    application: { status: "active" },
+                  },
+                },
+              },
+            },
+          },
+        },
+        select: { id: true },
+        orderBy: { createdAt: "asc" },
+      });
+      return users.map((user) => user.id);
+    },
+
+    async revokeAccessTokensForUserApplication(
+      userId,
+      applicationId,
+      revokedAt,
+    ) {
+      await prisma.accessToken.updateMany({
+        where: {
+          userId,
+          applicationId,
+          status: "active",
+          revokedAt: null,
+        },
+        data: { status: "revoked", revokedAt },
+      });
+    },
+
     async createAuditLog(input) {
       await prisma.auditLog.create({
         data: {
@@ -568,6 +873,8 @@ export function createPrismaAdminRepository(
           id: input.id,
           eventType: input.eventType,
           userId: input.userId,
+          centralSessionId: input.centralSessionId,
+          applicationId: input.applicationId,
           payload: input.payload as unknown as Prisma.InputJsonValue,
         },
       });

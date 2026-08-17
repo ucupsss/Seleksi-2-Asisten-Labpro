@@ -246,4 +246,55 @@ describe("local session service", () => {
       "revoked",
     ]);
   });
+
+  it("revokes this application's user sessions when access policy changes", async () => {
+    const { service, sessions } = createRepository("app-a");
+    sessions.set("app-a-session", {
+      id: "local-session-1",
+      appKey: "app-a",
+      sessionTokenHash: "app-a-session",
+      externalUserId: "user-1",
+      centralSessionId: "central-session-1",
+      status: "active",
+      createdAt: new Date("2026-08-09T09:00:00.000Z"),
+      expiresAt: new Date("2026-08-09T11:00:00.000Z"),
+      revokedAt: null,
+    });
+    sessions.set("other-user-session", {
+      id: "local-session-2",
+      appKey: "app-a",
+      sessionTokenHash: "other-user-session",
+      externalUserId: "user-2",
+      centralSessionId: "central-session-2",
+      status: "active",
+      createdAt: new Date("2026-08-09T09:00:00.000Z"),
+      expiresAt: new Date("2026-08-09T11:00:00.000Z"),
+      revokedAt: null,
+    });
+    sessions.set("other-app-session", {
+      id: "local-session-3",
+      appKey: "app-b",
+      sessionTokenHash: "other-app-session",
+      externalUserId: "user-1",
+      centralSessionId: "central-session-1",
+      status: "active",
+      createdAt: new Date("2026-08-09T09:00:00.000Z"),
+      expiresAt: new Date("2026-08-09T11:00:00.000Z"),
+      revokedAt: null,
+    });
+
+    const result = await service.processInternalLogout({
+      eventId: "event-policy-1",
+      eventType: "AccessPolicyChanged",
+      externalUserId: "user-1",
+      centralSessionId: null,
+      appKey: "app-a",
+      reason: "group_membership_removed",
+    });
+
+    expect(result).toEqual({ alreadyProcessed: false, revokedCount: 1 });
+    expect(sessions.get("app-a-session")?.status).toBe("revoked");
+    expect(sessions.get("other-user-session")?.status).toBe("active");
+    expect(sessions.get("other-app-session")?.status).toBe("active");
+  });
 });

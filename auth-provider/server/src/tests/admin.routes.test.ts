@@ -64,6 +64,10 @@ function createFakeAdminService(): AdminService {
       description: input.description ?? null,
     }),
     addUserToGroup: async () => {},
+    removeUserFromGroup: async () => {},
+    listMemberships: async () => [
+      { userId: "user-1", groupId: "group-1" },
+    ],
     listApplications: async () => [
       {
         id: "app-1",
@@ -85,6 +89,10 @@ function createFakeAdminService(): AdminService {
       redirectUris: [input.redirectUri],
     }),
     addApplicationPolicy: async () => {},
+    removeApplicationPolicy: async () => {},
+    listApplicationPolicies: async () => [
+      { applicationId: "app-1", groupId: "group-1", effect: "allow" },
+    ],
     listAuditLogs: async () => [
       {
         id: "audit-1",
@@ -154,6 +162,32 @@ describe("admin routes", () => {
 
     expect(response.status).toBe(201);
     expect(response.body).toEqual({ policy: { effect: "allow" } });
+  });
+
+  it("removes memberships and policies through the control panel", async () => {
+    const [membership, policy] = await Promise.all([
+      request(createApp()).delete("/admin/groups/group-1/users/user-1"),
+      request(createApp()).delete(
+        "/admin/applications/app-1/policies/group-1",
+      ),
+    ]);
+
+    expect(membership.status).toBe(204);
+    expect(policy.status).toBe(204);
+  });
+
+  it("returns memberships and actual policies", async () => {
+    const [membership, policy] = await Promise.all([
+      request(createApp()).get("/admin/memberships"),
+      request(createApp()).get("/admin/policies"),
+    ]);
+
+    expect(membership.body.memberships).toEqual([
+      { userId: "user-1", groupId: "group-1" },
+    ]);
+    expect(policy.body.policies).toEqual([
+      { applicationId: "app-1", groupId: "group-1", effect: "allow" },
+    ]);
   });
 
   it("returns audit logs and events for operator visibility", async () => {
