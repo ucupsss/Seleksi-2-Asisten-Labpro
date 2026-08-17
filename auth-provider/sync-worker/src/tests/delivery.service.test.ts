@@ -37,6 +37,7 @@ function createDelivery(
 
 function createRepository(deliveries: EventDeliveryJob[]) {
   const succeeded: string[] = [];
+  const succeededAttemptCounts: number[] = [];
   const retrying: Array<{ id: string; attemptCount: number; nextRetryAt: Date }> =
     [];
   const failed: Array<{ id: string; attemptCount: number }> = [];
@@ -45,10 +46,14 @@ function createRepository(deliveries: EventDeliveryJob[]) {
 
   const repository: DeliveryRepository = {
     listDeliveriesForEvent: async () => deliveries,
-    markDeliverySucceeded: async (id) => {
+    markDeliverySucceeded: async (id, _processedAt, attemptCount) => {
       succeeded.push(id);
+      succeededAttemptCounts.push(attemptCount);
       const delivery = deliveries.find((item) => item.id === id);
-      if (delivery) delivery.status = "succeeded";
+      if (delivery) {
+        delivery.status = "succeeded";
+        delivery.attemptCount = attemptCount;
+      }
     },
     markDeliveryRetrying: async (input) => {
       retrying.push({
@@ -81,6 +86,7 @@ function createRepository(deliveries: EventDeliveryJob[]) {
   return {
     repository,
     succeeded,
+    succeededAttemptCounts,
     retrying,
     failed,
     processedEvents,
@@ -116,7 +122,12 @@ describe("delivery service", () => {
         },
       }),
     ];
-    const { repository, succeeded, processedEvents } =
+    const {
+      repository,
+      succeeded,
+      succeededAttemptCounts,
+      processedEvents,
+    } =
       createRepository(deliveries);
     const { client, calls } = createClient();
     const service = createDeliveryService({
@@ -135,6 +146,8 @@ describe("delivery service", () => {
       "http://localhost:4102/internal/logout",
     ]);
     expect(succeeded).toEqual(["delivery-1", "delivery-2"]);
+    expect(succeededAttemptCounts).toEqual([1, 1]);
+    expect(deliveries.map((delivery) => delivery.attemptCount)).toEqual([1, 1]);
     expect(processedEvents).toEqual(["event-1"]);
     expect(outcome).toBe("processed");
   });
@@ -174,6 +187,29 @@ describe("delivery service", () => {
       },
     ]);
     expect(outcome).toBe("retry");
+  });
+
+  it("increments the attempt count when a retry succeeds", async () => {
+    const deliveries = [
+      createDelivery({ status: "retrying", attemptCount: 2 }),
+    ];
+    const { repository, succeededAttemptCounts } =
+      createRepository(deliveries);
+    const { client } = createClient();
+    const service = createDeliveryService({
+      repository,
+      client,
+      internalSecret: "internal-secret",
+      maxAttempts: 3,
+      retryDelayMs: 1000,
+      now: () => new Date("2026-08-09T10:00:00.000Z"),
+    });
+
+    const outcome = await service.processRevocationEvent(payload);
+
+    expect(succeededAttemptCounts).toEqual([3]);
+    expect(deliveries[0]?.attemptCount).toBe(3);
+    expect(outcome).toBe("processed");
   });
 
   it("moves delivery to failed after max attempts", async () => {

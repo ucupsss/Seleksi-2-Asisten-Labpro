@@ -25,7 +25,11 @@ export interface EventDeliveryJob {
 
 export interface DeliveryRepository {
   listDeliveriesForEvent(eventId: string): Promise<EventDeliveryJob[]>;
-  markDeliverySucceeded(id: string, processedAt: Date): Promise<void>;
+  markDeliverySucceeded(
+    id: string,
+    processedAt: Date,
+    attemptCount: number,
+  ): Promise<void>;
   markDeliveryRetrying(input: {
     id: string;
     attemptCount: number;
@@ -101,7 +105,11 @@ export function createDeliveryService(
             payload,
             deps.internalSecret,
           );
-          await deps.repository.markDeliverySucceeded(delivery.id, attemptedAt);
+          await deps.repository.markDeliverySucceeded(
+            delivery.id,
+            attemptedAt,
+            nextAttemptCount,
+          );
         } catch (error) {
           if (nextAttemptCount >= deps.maxAttempts) {
             await deps.repository.markDeliveryFailed({
@@ -192,11 +200,12 @@ export function createPrismaDeliveryRepository(
       });
     },
 
-    async markDeliverySucceeded(id, processedAt) {
+    async markDeliverySucceeded(id, processedAt, attemptCount) {
       await prisma.eventDelivery.update({
         where: { id },
         data: {
           status: "succeeded",
+          attemptCount,
           processedAt,
           lastAttemptAt: processedAt,
           nextRetryAt: null,
