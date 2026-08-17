@@ -137,10 +137,15 @@ export function createPrismaLocalSessionRepository(
 
     async findProcessedEvent(input) {
       const event = await prisma.processedEvent.findUnique({
-        where: { eventId: input.eventId },
+        where: {
+          appKey_eventId: {
+            appKey: input.appKey,
+            eventId: input.eventId,
+          },
+        },
       });
 
-      return event && event.appKey === input.appKey ? event : null;
+      return event;
     },
 
     async insertProcessedEvent(input) {

@@ -40,12 +40,13 @@ model ProfileCache {
 }
 
 model ProcessedEvent {
-  eventId     String   @id
+  eventId     String
   appKey      String
   eventType   String
   processedAt DateTime @default(now())
   result      String
 
+  @@id([appKey, eventId])
   @@index([appKey, eventType])
 }
 
