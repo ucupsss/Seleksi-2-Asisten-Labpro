@@ -18,6 +18,10 @@ const callbackQuerySchema = z.object({
   state: z.string().min(1),
 });
 
+const operationalDataQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 const internalLogoutBodySchema = z
   .object({
     eventId: z.string().min(1),
@@ -91,6 +95,19 @@ function serializeSessionView(view: Awaited<ReturnType<LocalSessionService["getC
       expiresAt: view.session.expiresAt.toISOString(),
     },
   };
+}
+
+async function requireActiveLocalSession(
+  req: express.Request,
+  localSessionService: LocalSessionService,
+  cookieName: string,
+) {
+  const session = await localSessionService.getCurrentSession(
+    req.cookies[cookieName],
+  );
+  if (session.status !== "authenticated") {
+    throw new HttpError(401, "UNAUTHORIZED", "Sesi lokal tidak aktif");
+  }
 }
 
 export function createAppServer(
@@ -197,6 +214,54 @@ export function createAppServer(
         req.cookies[config.localSessionCookieName],
       );
       res.json(serializeSessionView(view));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/activity-logs", async (req, res, next) => {
+    try {
+      const query = operationalDataQuerySchema.safeParse(req.query);
+      if (!query.success) {
+        throw new HttpError(400, "INVALID_REQUEST", "Limit activity log tidak valid");
+      }
+      await requireActiveLocalSession(
+        req,
+        localSessionService,
+        config.localSessionCookieName,
+      );
+      const logs = await localSessionService.listActivityLogs(query.data.limit);
+      res.json({
+        logs: logs.map((log) => ({
+          ...log,
+          createdAt: log.createdAt.toISOString(),
+        })),
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/processed-events", async (req, res, next) => {
+    try {
+      const query = operationalDataQuerySchema.safeParse(req.query);
+      if (!query.success) {
+        throw new HttpError(400, "INVALID_REQUEST", "Limit processed event tidak valid");
+      }
+      await requireActiveLocalSession(
+        req,
+        localSessionService,
+        config.localSessionCookieName,
+      );
+      const events = await localSessionService.listProcessedEvents(
+        query.data.limit,
+      );
+      res.json({
+        events: events.map((event) => ({
+          ...event,
+          processedAt: event.processedAt.toISOString(),
+        })),
+      });
     } catch (error) {
       next(error);
     }

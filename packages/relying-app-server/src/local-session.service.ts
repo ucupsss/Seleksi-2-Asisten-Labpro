@@ -27,6 +27,22 @@ export interface AuthenticatedLocalSessionRecord extends LocalSessionRecord {
   profile: ProfileRecord;
 }
 
+export interface ActivityLogRecord {
+  id: string;
+  appKey: string;
+  eventType: string;
+  message: string;
+  createdAt: Date;
+}
+
+export interface ProcessedEventRecord {
+  appKey: string;
+  eventId: string;
+  eventType: string;
+  result: string;
+  processedAt: Date;
+}
+
 export interface LocalSessionRepository {
   createLocalSession(input: {
     appKey: string;
@@ -58,6 +74,10 @@ export interface LocalSessionRepository {
     message: string;
     metadata?: Record<string, unknown>;
   }): Promise<void>;
+  listActivityLogs(input: {
+    appKey: string;
+    limit: number;
+  }): Promise<ActivityLogRecord[]>;
   findProcessedEvent(input: {
     appKey: string;
     eventId: string;
@@ -68,6 +88,10 @@ export interface LocalSessionRepository {
     eventType: string;
     result: string;
   }): Promise<void>;
+  listProcessedEvents(input: {
+    appKey: string;
+    limit: number;
+  }): Promise<ProcessedEventRecord[]>;
   revokeSessionsForLogoutEvent(input: {
     appKey?: string;
     centralSessionId: string | null;
@@ -98,6 +122,8 @@ export interface LocalSessionService {
   ): Promise<{ sessionToken: string; session: LocalSessionRecord }>;
   getCurrentSession(sessionToken: string | undefined): Promise<LocalSessionView>;
   logout(sessionToken: string | undefined): Promise<void>;
+  listActivityLogs(limit: number): Promise<ActivityLogRecord[]>;
+  listProcessedEvents(limit: number): Promise<ProcessedEventRecord[]>;
   processInternalLogout(input: {
     eventId: string;
     eventType: string;
@@ -208,6 +234,17 @@ export function createLocalSessionService(
           },
         });
       }
+    },
+
+    async listActivityLogs(limit) {
+      return deps.repository.listActivityLogs({ appKey: deps.appKey, limit });
+    },
+
+    async listProcessedEvents(limit) {
+      return deps.repository.listProcessedEvents({
+        appKey: deps.appKey,
+        limit,
+      });
     },
 
     async processInternalLogout(input) {

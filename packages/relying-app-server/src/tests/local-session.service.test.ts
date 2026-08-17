@@ -57,6 +57,17 @@ function createRepository(appKey = "app-a") {
     createActivityLog: async (input) => {
       activityLogs.push({ appKey: input.appKey, eventType: input.eventType });
     },
+    listActivityLogs: async (input) =>
+      activityLogs
+        .filter((log) => log.appKey === input.appKey)
+        .slice(0, input.limit)
+        .map((log, index) => ({
+          id: `log-${index + 1}`,
+          appKey: log.appKey,
+          eventType: log.eventType,
+          message: "Recorded activity",
+          createdAt: new Date("2026-08-09T10:00:00.000Z"),
+        })),
     findProcessedEvent: async (input) =>
       processedEvents.has(`${input.appKey}:${input.eventId}`)
         ? { eventId: input.eventId, appKey: input.appKey }
@@ -64,6 +75,17 @@ function createRepository(appKey = "app-a") {
     insertProcessedEvent: async (input) => {
       processedEvents.add(`${input.appKey}:${input.eventId}`);
     },
+    listProcessedEvents: async (input) =>
+      [...processedEvents]
+        .filter((key) => key.startsWith(`${input.appKey}:`))
+        .slice(0, input.limit)
+        .map((key) => ({
+          appKey: input.appKey,
+          eventId: key.slice(input.appKey.length + 1),
+          eventType: "SessionRevoked",
+          result: "success",
+          processedAt: new Date("2026-08-09T10:05:00.000Z"),
+        })),
     revokeSessionsForLogoutEvent: async (input) => {
       let count = 0;
       for (const session of sessions.values()) {

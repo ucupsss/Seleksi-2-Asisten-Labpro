@@ -41,6 +41,20 @@ type AuthPhase =
   | "signed-out"
   | "error";
 
+interface ActivityLogEntry {
+  id: string;
+  eventType: string;
+  message: string;
+  createdAt: string;
+}
+
+interface ProcessedEventEntry {
+  eventId: string;
+  eventType: string;
+  result: string;
+  processedAt: string;
+}
+
 const signedOutStorageKey = "app-a:local-signed-out";
 
 export function nextAuthPhase(
@@ -78,7 +92,22 @@ export function App() {
   const [session, setSession] = useState<SessionResponse>({ status: "anonymous" });
   const [phase, setPhase] = useState<AuthPhase>("checking");
   const [error, setError] = useState<string | null>(null);
+  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
+  const [processedEvents, setProcessedEvents] = useState<ProcessedEventEntry[]>([]);
   const automaticLoginStarted = useRef(false);
+
+  async function loadOperationalData() {
+    try {
+      const [activityResponse, processedResponse] = await Promise.all([
+        apiJson<{ logs: ActivityLogEntry[] }>("/activity-logs?limit=50"),
+        apiJson<{ events: ProcessedEventEntry[] }>("/processed-events?limit=50"),
+      ]);
+      setActivityLogs(activityResponse.logs);
+      setProcessedEvents(processedResponse.events);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }
 
   async function loadSession() {
     setPhase("checking");
@@ -96,6 +125,7 @@ export function App() {
 
       if (nextPhase === "authenticated") {
         sessionStorage.removeItem(signedOutStorageKey);
+        await loadOperationalData();
       }
 
       if (nextPhase === "redirecting" && !automaticLoginStarted.current) {
@@ -134,6 +164,8 @@ export function App() {
       await apiJson<void>("/logout", { method: "POST" });
       sessionStorage.setItem(signedOutStorageKey, "true");
       setSession({ status: "anonymous" });
+      setActivityLogs([]);
+      setProcessedEvents([]);
       setPhase("signed-out");
     } catch (caught) {
       setError(errorMessage(caught));
@@ -272,14 +304,26 @@ export function App() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Event</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>Message</TableHead>
+                  <TableHead>Time</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                <TableRow>
-                  <TableCell>local_login_success</TableCell>
-                  <TableCell><Badge>recorded</Badge></TableCell>
-                </TableRow>
+                {activityLogs.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-muted-foreground">
+                      No activity recorded yet.
+                    </TableCell>
+                  </TableRow>
+                ) : activityLogs.map((log) => (
+                  <TableRow key={log.id}>
+                    <TableCell><Badge variant="outline">{log.eventType}</Badge></TableCell>
+                    <TableCell>{log.message}</TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">
+                      {new Date(log.createdAt).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           </CardContent>
@@ -290,10 +334,36 @@ export function App() {
             <CardTitle>Processed events</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-3 rounded-lg border p-4 text-sm text-muted-foreground">
-              <ShieldCheck className="h-4 w-4" />
-              Event table
-            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Event ID</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Result</TableHead>
+                  <TableHead>Time</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {processedEvents.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-muted-foreground">
+                      No synchronization events processed yet.
+                    </TableCell>
+                  </TableRow>
+                ) : processedEvents.map((event) => (
+                  <TableRow key={event.eventId}>
+                    <TableCell className="max-w-28 truncate font-mono text-xs" title={event.eventId}>
+                      {event.eventId}
+                    </TableCell>
+                    <TableCell>{event.eventType}</TableCell>
+                    <TableCell><Badge variant="success">{event.result}</Badge></TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">
+                      {new Date(event.processedAt).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       </section>

@@ -49,6 +49,7 @@ function createRepository() {
       return input;
     },
     createActivityLog: async () => {},
+    listActivityLogs: async () => [],
     findProcessedEvent: async (input) =>
       processedEvents.has(`${input.appKey}:${input.eventId}`)
         ? { appKey: input.appKey, eventId: input.eventId }
@@ -56,6 +57,7 @@ function createRepository() {
     insertProcessedEvent: async (input) => {
       processedEvents.add(`${input.appKey}:${input.eventId}`);
     },
+    listProcessedEvents: async () => [],
     revokeSessionsForLogoutEvent: async (input) => {
       let count = 0;
       for (const session of sessions.values()) {

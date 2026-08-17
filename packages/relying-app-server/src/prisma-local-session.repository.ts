@@ -135,6 +135,21 @@ export function createPrismaLocalSessionRepository(
       });
     },
 
+    async listActivityLogs(input) {
+      return prisma.activityLog.findMany({
+        where: { appKey: input.appKey },
+        select: {
+          id: true,
+          appKey: true,
+          eventType: true,
+          message: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: input.limit,
+      });
+    },
+
     async findProcessedEvent(input) {
       const event = await prisma.processedEvent.findUnique({
         where: {
@@ -151,6 +166,21 @@ export function createPrismaLocalSessionRepository(
     async insertProcessedEvent(input) {
       await prisma.processedEvent.create({
         data: input,
+      });
+    },
+
+    async listProcessedEvents(input) {
+      return prisma.processedEvent.findMany({
+        where: { appKey: input.appKey },
+        select: {
+          appKey: true,
+          eventId: true,
+          eventType: true,
+          result: true,
+          processedAt: true,
+        },
+        orderBy: { processedAt: "desc" },
+        take: input.limit,
       });
     },
 

@@ -9,6 +9,8 @@ export default defineConfig({
       "/login": process.env.APP_B_SERVER_URL ?? "http://localhost:4201",
       "/session": process.env.APP_B_SERVER_URL ?? "http://localhost:4201",
       "/logout": process.env.APP_B_SERVER_URL ?? "http://localhost:4201",
+      "/activity-logs": process.env.APP_B_SERVER_URL ?? "http://localhost:4201",
+      "/processed-events": process.env.APP_B_SERVER_URL ?? "http://localhost:4201",
     },
   },
 });

@@ -74,6 +74,15 @@ function createRepository() {
       return profile;
     },
     createActivityLog: async () => {},
+    listActivityLogs: async (input) => [
+      {
+        id: "log-1",
+        appKey: input.appKey,
+        eventType: "local_login_success",
+        message: "Local session created from SSO userinfo.",
+        createdAt: new Date("2026-08-09T10:00:00.000Z"),
+      },
+    ].slice(0, input.limit),
     findProcessedEvent: async (input) =>
       processedEvents.has(`${input.appKey}:${input.eventId}`)
         ? { appKey: input.appKey, eventId: input.eventId }
@@ -81,6 +90,15 @@ function createRepository() {
     insertProcessedEvent: async (input) => {
       processedEvents.add(`${input.appKey}:${input.eventId}`);
     },
+    listProcessedEvents: async (input) => [
+      {
+        appKey: input.appKey,
+        eventId: "event-1",
+        eventType: "SessionRevoked",
+        result: "success",
+        processedAt: new Date("2026-08-09T10:05:00.000Z"),
+      },
+    ].slice(0, input.limit),
     revokeSessionsForLogoutEvent: async (input) => {
       let count = 0;
       for (const session of sessions.values()) {
@@ -203,6 +221,65 @@ describe("relying app server", () => {
       email: "student@example.com",
       groups: ["app-a-users"],
     });
+  });
+
+  it("returns database-backed activity logs for an authenticated local session", async () => {
+    const app = createTestApp();
+    const callback = await request(app)
+      .get("/auth/callback")
+      .query({ code: "raw-code", state: "state-1" })
+      .set("Cookie", ["oauth_state=state-1", "pkce_verifier=verifier-1"]);
+    const sessionCookie = getCookie(callback, "app_a_session")?.split(";")[0];
+
+    const response = await request(app)
+      .get("/activity-logs?limit=10")
+      .set("Cookie", [sessionCookie ?? ""]);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      logs: [
+        {
+          id: "log-1",
+          appKey: "app-a",
+          eventType: "local_login_success",
+          message: "Local session created from SSO userinfo.",
+          createdAt: "2026-08-09T10:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("returns database-backed processed events for an authenticated local session", async () => {
+    const app = createTestApp();
+    const callback = await request(app)
+      .get("/auth/callback")
+      .query({ code: "raw-code", state: "state-1" })
+      .set("Cookie", ["oauth_state=state-1", "pkce_verifier=verifier-1"]);
+    const sessionCookie = getCookie(callback, "app_a_session")?.split(";")[0];
+
+    const response = await request(app)
+      .get("/processed-events")
+      .set("Cookie", [sessionCookie ?? ""]);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      events: [
+        {
+          appKey: "app-a",
+          eventId: "event-1",
+          eventType: "SessionRevoked",
+          result: "success",
+          processedAt: "2026-08-09T10:05:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("does not expose operational data without an active local session", async () => {
+    const response = await request(createTestApp()).get("/activity-logs");
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("UNAUTHORIZED");
   });
 
   it("revokes local session without calling Auth Provider logout", async () => {
