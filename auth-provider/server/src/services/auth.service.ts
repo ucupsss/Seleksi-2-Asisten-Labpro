@@ -28,7 +28,9 @@ export interface ActiveSsoSessionRecord {
   status: string;
   expiresAt: Date;
   revokedAt: Date | null;
-  user: AuthUserRecord;
+  user: AuthUserRecord & {
+    groups: Array<{ group: { name: string } }>;
+  };
 }
 
 export interface AuthRepository {
@@ -81,6 +83,7 @@ export interface SsoSessionContext {
     id: string;
     name: string;
     email: string;
+    groups: string[];
   };
 }
 
@@ -208,7 +211,10 @@ export function createAuthService(deps: AuthServiceDependencies): AuthService {
 
       return {
         id: session.id,
-        user: toPublicUser(session.user),
+        user: {
+          ...toPublicUser(session.user),
+          groups: session.user.groups.map((membership) => membership.group.name),
+        },
       };
     },
 
@@ -277,7 +283,15 @@ export function createPrismaAuthRepository(prisma: PrismaClient): AuthRepository
     async findActiveSsoSessionByHash(sessionTokenHash) {
       return prisma.ssoSession.findUnique({
         where: { sessionTokenHash },
-        include: { user: true },
+        include: {
+          user: {
+            include: {
+              groups: {
+                include: { group: true },
+              },
+            },
+          },
+        },
       });
     },
 

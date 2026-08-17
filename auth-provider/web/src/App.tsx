@@ -32,6 +32,7 @@ import {
   Users,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { getApiErrorCode, getSafeReturnTo } from "./admin-auth.js";
 import { apiJson } from "./lib/api.js";
 
 type UserStatus = "active" | "inactive";
@@ -83,6 +84,22 @@ interface ApplicationPolicy {
   groupId: string;
   effect: "allow";
 }
+
+interface AdministratorSession {
+  id: string;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    groups: string[];
+  };
+}
+
+type AdminAccessState =
+  | { status: "checking" }
+  | { status: "authorized"; session: AdministratorSession }
+  | { status: "forbidden" }
+  | { status: "error"; message: string };
 
 interface AdminState {
   users: User[];
@@ -152,11 +169,13 @@ function MetricCard({
 }
 
 function LoginPage() {
-  const [email, setEmail] = useState("student@example.com");
+  const returnTo = getSafeReturnTo(getReturnTo(), window.location.origin);
+  const [email, setEmail] = useState(
+    returnTo === "/admin" ? "admin@example.com" : "student@example.com",
+  );
   const [password, setPassword] = useState("password123");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const returnTo = getReturnTo();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -226,6 +245,9 @@ function LoginPage() {
 }
 
 function AdminPage() {
+  const [access, setAccess] = useState<AdminAccessState>({
+    status: "checking",
+  });
   const [state, setState] = useState<AdminState>(emptyAdminState);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -274,6 +296,27 @@ function AdminPage() {
     }));
   }, [state.groups, state.memberships, state.users]);
 
+  async function verifyAdministrator() {
+    setAccess({ status: "checking" });
+    try {
+      const response = await apiJson<{ session: AdministratorSession }>(
+        "/admin/session",
+      );
+      setAccess({ status: "authorized", session: response.session });
+    } catch (caught) {
+      const code = getApiErrorCode(caught);
+      if (code === "UNAUTHORIZED") {
+        window.location.replace("/login?returnTo=%2Fadmin");
+        return;
+      }
+      if (code === "FORBIDDEN") {
+        setAccess({ status: "forbidden" });
+        return;
+      }
+      setAccess({ status: "error", message: errorMessage(caught) });
+    }
+  }
+
   async function loadAdminData() {
     setLoading(true);
     setError(null);
@@ -298,6 +341,15 @@ function AdminPage() {
         events: events.events,
       });
     } catch (caught) {
+      const code = getApiErrorCode(caught);
+      if (code === "UNAUTHORIZED") {
+        window.location.replace("/login?returnTo=%2Fadmin");
+        return;
+      }
+      if (code === "FORBIDDEN") {
+        setAccess({ status: "forbidden" });
+        return;
+      }
       setError(errorMessage(caught));
     } finally {
       setLoading(false);
@@ -305,8 +357,14 @@ function AdminPage() {
   }
 
   useEffect(() => {
-    void loadAdminData();
+    void verifyAdministrator();
   }, []);
+
+  useEffect(() => {
+    if (access.status === "authorized") {
+      void loadAdminData();
+    }
+  }, [access.status]);
 
   async function createUser(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -390,6 +448,66 @@ function AdminPage() {
     await loadAdminData();
   }
 
+  async function switchAccount() {
+    await apiJson("/auth/logout", { method: "POST" });
+    window.location.href = "/login?returnTo=%2Fadmin";
+  }
+
+  if (access.status === "checking") {
+    return (
+      <main className="flex min-h-[100dvh] items-center justify-center px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Checking administrator access</CardTitle>
+            <CardDescription>
+              Verifying your central session before loading the control panel.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </main>
+    );
+  }
+
+  if (access.status === "forbidden") {
+    return (
+      <main className="flex min-h-[100dvh] items-center justify-center px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <Badge variant="warning" className="w-fit">Access denied</Badge>
+            <CardTitle>Administrator access required</CardTitle>
+            <CardDescription>
+              Your account is signed in, but it is not a member of the
+              administrators group.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full" onClick={() => void switchAccount()}>
+              Sign out and switch account
+            </Button>
+          </CardContent>
+        </Card>
+      </main>
+    );
+  }
+
+  if (access.status === "error") {
+    return (
+      <main className="flex min-h-[100dvh] items-center justify-center px-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle>Unable to verify access</CardTitle>
+            <CardDescription>{access.message}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button className="w-full" onClick={() => void verifyAdministrator()}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto min-h-[100dvh] max-w-7xl px-4 py-6">
       <header className="flex flex-col gap-4 border-b pb-5 md:flex-row md:items-center md:justify-between">
@@ -401,6 +519,9 @@ function AdminPage() {
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">
             Auth Provider Admin
           </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Signed in as {access.session.user.email}
+          </p>
         </div>
         <Button variant="outline" onClick={loadAdminData} disabled={loading}>
           <RefreshCw className="h-4 w-4" />

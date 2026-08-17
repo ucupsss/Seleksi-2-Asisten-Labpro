@@ -47,7 +47,10 @@ function createRepository(overrides: Partial<AuthRepository> = {}) {
         status: "active",
         expiresAt: session.expiresAt,
         revokedAt: null,
-        user: activeUser,
+        user: {
+          ...activeUser,
+          groups: [{ group: { name: "app-a-users" } }],
+        },
       };
     },
     revokeSsoSessionByHash: async (sessionTokenHash, reason) => {
@@ -176,6 +179,7 @@ describe("auth service", () => {
         id: "user-1",
         name: "Student User",
         email: "student@example.com",
+        groups: ["app-a-users"],
       },
     });
   });

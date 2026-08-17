@@ -8,6 +8,7 @@ import {
   notFoundMiddleware,
 } from "./middleware/error-handler.js";
 import { requestIdMiddleware } from "./middleware/request-id.js";
+import { createRequireAdministrator } from "./middleware/require-administrator.js";
 import { createAdminRoutes } from "./routes/admin.routes.js";
 import { createAuthRoutes } from "./routes/auth.routes.js";
 import { healthRoutes } from "./routes/health.routes.js";
@@ -85,6 +86,11 @@ export function createAuthApp(options: CreateAuthAppOptions = {}) {
   app.use(healthRoutes);
   app.use(createAuthRoutes(authService, config));
   app.use(createOauthRoutes(authService, oauthService, config));
+  const requireAdministrator = createRequireAdministrator(authService, config);
+  app.get("/admin/session", requireAdministrator, (_req, res) => {
+    res.json({ session: res.locals.administratorSession });
+  });
+  app.use("/admin", requireAdministrator);
   app.use(createAdminRoutes(adminService));
 
   app.use(notFoundMiddleware);

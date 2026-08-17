@@ -2,15 +2,30 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createAuthApp } from "../app.js";
 import type { AuthService } from "../services/auth.service.js";
+import type { SsoSessionContext } from "../services/auth.service.js";
 import type { AdminService } from "../services/admin.service.js";
 import type { OauthService } from "../services/oauth.service.js";
 
-function createFakeAuthService(): AuthService {
+function createFakeAuthService(
+  currentSession: SsoSessionContext | null = {
+    id: "admin-session",
+    user: {
+      id: "admin-1",
+      name: "Admin User",
+      email: "admin@example.com",
+      groups: ["administrators"],
+    },
+  },
+  onSessionToken?: (sessionToken: string | undefined) => void,
+): AuthService {
   return {
     loginWithPassword: async () => {
       throw new Error("unused");
     },
-    getCurrentSsoSession: async () => null,
+    getCurrentSsoSession: async (sessionToken) => {
+      onSessionToken?.(sessionToken);
+      return currentSession;
+    },
     logout: async () => {},
   };
 }
@@ -112,15 +127,70 @@ function createFakeAdminService(): AdminService {
   };
 }
 
-function createApp() {
+function createApp(authService = createFakeAuthService()) {
   return createAuthApp({
-    authService: createFakeAuthService(),
+    authService,
     oauthService: createFakeOauthService(),
     adminService: createFakeAdminService(),
   });
 }
 
 describe("admin routes", () => {
+  it("rejects an anonymous admin API request", async () => {
+    const response = await request(createApp(createFakeAuthService(null))).get(
+      "/admin/users",
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toMatchObject({
+      code: "UNAUTHORIZED",
+      message: "Autentikasi diperlukan",
+    });
+  });
+
+  it("rejects an authenticated user outside the administrators group", async () => {
+    const response = await request(
+      createApp(
+        createFakeAuthService({
+          id: "student-session",
+          user: {
+            id: "user-1",
+            name: "Student User",
+            email: "student@example.com",
+            groups: ["app-a-users"],
+          },
+        }),
+      ),
+    ).get("/admin/users");
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toMatchObject({
+      code: "FORBIDDEN",
+      message: "Akses administrator diperlukan",
+    });
+  });
+
+  it("returns the administrator session and reads the central cookie", async () => {
+    let receivedSessionToken: string | undefined;
+    const response = await request(
+      createApp(
+        createFakeAuthService(undefined, (sessionToken) => {
+          receivedSessionToken = sessionToken;
+        }),
+      ),
+    )
+      .get("/admin/session")
+      .set("Cookie", ["sso_session=admin-token"]);
+
+    expect(response.status).toBe(200);
+    expect(receivedSessionToken).toBe("admin-token");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body.session.user).toMatchObject({
+      email: "admin@example.com",
+      groups: ["administrators"],
+    });
+  });
+
   it("returns users for control panel", async () => {
     const response = await request(createApp()).get("/admin/users");
 

@@ -6,13 +6,17 @@ import type { OauthService } from "../services/oauth.service.js";
 
 function createFakeAuthService(
   currentSession:
-    | { id: string; user: { id: string; name: string; email: string } }
+    | {
+        id: string;
+        user: { id: string; name: string; email: string; groups: string[] };
+      }
     | null = {
       id: "session-1",
       user: {
         id: "user-1",
         name: "Student User",
         email: "student@example.com",
+        groups: ["app-a-users"],
       },
     },
 ): AuthService {

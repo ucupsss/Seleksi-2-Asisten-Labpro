@@ -7,7 +7,7 @@ export default defineConfig({
     port: 4000,
     proxy: {
       "/auth": process.env.AUTH_SERVER_URL ?? "http://localhost:4001",
-      "^/admin/(users|groups|applications|audit-logs|events)":
+      "^/admin/(session|users|groups|applications|memberships|policies|audit-logs|events)":
         process.env.AUTH_SERVER_URL ?? "http://localhost:4001",
       "/oauth": process.env.AUTH_SERVER_URL ?? "http://localhost:4001",
     },
