@@ -25,6 +25,7 @@ import {
   Activity,
   AppWindow,
   KeyRound,
+  LogOut,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -32,7 +33,11 @@ import {
   Users,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { getApiErrorCode, getSafeReturnTo } from "./admin-auth.js";
+import {
+  getApiErrorCode,
+  getSafeReturnTo,
+  requestSsoLogout,
+} from "./admin-auth.js";
 import { apiJson } from "./lib/api.js";
 
 type UserStatus = "active" | "inactive";
@@ -176,6 +181,8 @@ function LoginPage() {
   const [password, setPassword] = useState("password123");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const signedOut =
+    new URLSearchParams(window.location.search).get("signedOut") === "1";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -213,6 +220,12 @@ function LoginPage() {
           </CardHeader>
           <CardContent>
             <form className="space-y-4" onSubmit={handleSubmit}>
+              {signedOut ? (
+                <Alert>
+                  Central session ended. Logout is being synchronized to
+                  connected applications.
+                </Alert>
+              ) : null}
               {error ? <Alert>{error}</Alert> : null}
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
@@ -251,6 +264,8 @@ function AdminPage() {
   const [state, setState] = useState<AdminState>(emptyAdminState);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [logoutLoading, setLogoutLoading] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
   const [userForm, setUserForm] = useState({
     name: "",
     email: "",
@@ -449,8 +464,20 @@ function AdminPage() {
   }
 
   async function switchAccount() {
-    await apiJson("/auth/logout", { method: "POST" });
+    await requestSsoLogout(apiJson);
     window.location.href = "/login?returnTo=%2Fadmin";
+  }
+
+  async function handleSsoLogout() {
+    setLogoutLoading(true);
+    setLogoutError(null);
+    try {
+      await requestSsoLogout(apiJson);
+      window.location.replace("/login?signedOut=1");
+    } catch (caught) {
+      setLogoutError(errorMessage(caught));
+      setLogoutLoading(false);
+    }
   }
 
   if (access.status === "checking") {
@@ -523,13 +550,24 @@ function AdminPage() {
             Signed in as {access.session.user.email}
           </p>
         </div>
-        <Button variant="outline" onClick={loadAdminData} disabled={loading}>
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={loadAdminData} disabled={loading}>
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void handleSsoLogout()}
+            disabled={logoutLoading}
+          >
+            <LogOut className="h-4 w-4" />
+            {logoutLoading ? "Signing out" : "SSO logout"}
+          </Button>
+        </div>
       </header>
 
       {error ? <Alert className="mt-4">{error}</Alert> : null}
+      {logoutError ? <Alert className="mt-4">{logoutError}</Alert> : null}
 
       <section className="mt-6 grid gap-4 md:grid-cols-4">
         <MetricCard title="Users" value={state.users.length} icon={Users} />

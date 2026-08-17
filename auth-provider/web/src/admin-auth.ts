@@ -28,3 +28,12 @@ export function getApiErrorCode(error: unknown): string | null {
 
   return null;
 }
+
+export type JsonRequester = <T>(
+  path: string,
+  init?: RequestInit,
+) => Promise<T>;
+
+export async function requestSsoLogout(request: JsonRequester): Promise<void> {
+  await request<void>("/auth/logout", { method: "POST" });
+}
