@@ -70,7 +70,7 @@ export interface LocalSessionRepository {
   }): Promise<void>;
   revokeSessionsForLogoutEvent(input: {
     appKey?: string;
-    centralSessionId: string;
+    centralSessionId: string | null;
     externalUserId: string;
     reason: string;
   }): Promise<number>;
@@ -102,7 +102,7 @@ export interface LocalSessionService {
     eventId: string;
     eventType: string;
     externalUserId: string;
-    centralSessionId: string;
+    centralSessionId: string | null;
     reason: string;
     appKey?: string | null;
   }): Promise<{ alreadyProcessed: boolean; revokedCount: number }>;

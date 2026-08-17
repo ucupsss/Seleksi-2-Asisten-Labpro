@@ -158,7 +158,7 @@ export function createPrismaLocalSessionRepository(
       const result = await prisma.localSession.updateMany({
         where: {
           appKey: input.appKey,
-          centralSessionId: input.centralSessionId,
+          centralSessionId: input.centralSessionId ?? undefined,
           externalUserId: input.externalUserId,
           status: "active",
           revokedAt: null,

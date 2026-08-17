@@ -18,15 +18,32 @@ const callbackQuerySchema = z.object({
   state: z.string().min(1),
 });
 
-const internalLogoutBodySchema = z.object({
-  eventId: z.string().min(1),
-  eventType: z.string().min(1),
-  userId: z.string().min(1),
-  centralSessionId: z.string().min(1),
-  applicationId: z.string().min(1).nullable().optional(),
-  appKey: z.string().min(1).nullable().optional(),
-  reason: z.string().min(1),
-});
+const internalLogoutBodySchema = z
+  .object({
+    eventId: z.string().min(1),
+    eventType: z.enum([
+      "SessionRevoked",
+      "PasswordChanged",
+      "AccessPolicyChanged",
+    ]),
+    userId: z.string().min(1),
+    centralSessionId: z.string().min(1).nullable(),
+    applicationId: z.string().min(1).nullable().optional(),
+    appKey: z.string().min(1).nullable().optional(),
+    reason: z.string().min(1),
+  })
+  .superRefine((event, context) => {
+    if (
+      event.eventType === "SessionRevoked" &&
+      event.centralSessionId === null
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["centralSessionId"],
+        message: "SessionRevoked requires a central session id",
+      });
+    }
+  });
 
 export interface CreateAppServerDependencies {
   prisma?: Parameters<typeof createPrismaLocalSessionRepository>[0];

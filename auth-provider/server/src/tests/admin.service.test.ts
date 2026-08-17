@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { RevocationEventPayload } from "@sso/shared";
 import { HttpError } from "../errors.js";
 import type {
   AdminRepository,
@@ -13,12 +14,27 @@ function createRepository() {
   const groups = new Map<string, GroupSummary>();
   const applications = new Map<string, ApplicationSummary>();
   const auditLogs: Array<{ eventType: string; result: string }> = [];
-  const events: Array<{ eventType: string; userId?: string }> = [];
-  const revokedSessions: Array<{ userId: string; reason: string }> = [];
+  const events: Array<{
+    id: string;
+    eventType: string;
+    userId: string;
+    payload: RevocationEventPayload;
+  }> = [];
+  const eventDeliveries: Array<{ eventId: string; applicationId: string }> = [];
+  const revokedSessions: Array<{
+    userId: string;
+    reason: string;
+    revokedAt: Date;
+  }> = [];
   const userGroups = new Set<string>();
   const applicationPolicies = new Set<string>();
+  let transactionCount = 0;
 
   const repository: AdminRepository = {
+    withTransaction: async (work) => {
+      transactionCount += 1;
+      return work(repository);
+    },
     listUsers: async () => [...users.values()],
     findUserByEmail: async (email) =>
       [...users.values()].find((user) => user.email === email) ?? null,
@@ -47,8 +63,8 @@ function createRepository() {
       users.set(id, updated);
       return updated;
     },
-    revokeActiveSessionsForUser: async (userId, reason) => {
-      revokedSessions.push({ userId, reason });
+    revokeActiveSessionsForUser: async (userId, reason, revokedAt) => {
+      revokedSessions.push({ userId, reason, revokedAt });
     },
     listGroups: async () => [...groups.values()],
     findGroupByName: async (name) =>
@@ -89,7 +105,10 @@ function createRepository() {
       auditLogs.push({ eventType: input.eventType, result: input.result });
     },
     createEvent: async (input) => {
-      events.push({ eventType: input.eventType, userId: input.userId });
+      events.push(input);
+    },
+    createEventDelivery: async (input) => {
+      eventDeliveries.push(input);
     },
     listAuditLogs: async () =>
       auditLogs.map((log, index) => ({
@@ -114,9 +133,11 @@ function createRepository() {
     applications,
     auditLogs,
     events,
+    eventDeliveries,
     revokedSessions,
     userGroups,
     applicationPolicies,
+    getTransactionCount: () => transactionCount,
   };
 }
 
@@ -125,6 +146,7 @@ function createService(repository: AdminRepository) {
     repository,
     hashPassword: async (plainPassword) => `hashed:${plainPassword}`,
     now: () => new Date("2026-08-09T10:00:00.000Z"),
+    generateEventId: () => "password-event-1",
   });
 }
 
@@ -175,13 +197,32 @@ describe("admin service", () => {
   });
 
   it("revokes active sessions and emits event when password changes", async () => {
-    const { repository, events, revokedSessions, users } = createRepository();
+    const {
+      repository,
+      events,
+      eventDeliveries,
+      revokedSessions,
+      users,
+      getTransactionCount,
+    } = createRepository();
     const service = createService(repository);
 
     await service.createUser({
       name: "Student User",
       email: "student@example.com",
       password: "password123",
+    });
+    await service.createApplication({
+      name: "App A",
+      clientId: "app-a-client",
+      redirectUri: "http://localhost:4101/auth/callback",
+      logoutNotificationUrl: "http://localhost:4101/internal/logout",
+    });
+    await service.createApplication({
+      name: "App B",
+      clientId: "app-b-client",
+      redirectUri: "http://localhost:4201/auth/callback",
+      logoutNotificationUrl: "http://localhost:4201/internal/logout",
     });
     const updated = await service.updateUser("user-1", {
       password: "new-password",
@@ -190,12 +231,34 @@ describe("admin service", () => {
     expect(updated).toMatchObject({ id: "user-1", email: "student@example.com" });
     expect(users.get("user-1")?.passwordHash).toBe("hashed:new-password");
     expect(revokedSessions).toEqual([
-      { userId: "user-1", reason: "password_changed" },
+      {
+        userId: "user-1",
+        reason: "password_changed",
+        revokedAt: new Date("2026-08-09T10:00:00.000Z"),
+      },
     ]);
-    expect(events).toContainEqual({
-      eventType: "PasswordChanged",
-      userId: "user-1",
-    });
+    expect(events).toEqual([
+      {
+        id: "password-event-1",
+        eventType: "PasswordChanged",
+        userId: "user-1",
+        payload: {
+          eventId: "password-event-1",
+          eventType: "PasswordChanged",
+          userId: "user-1",
+          centralSessionId: null,
+          applicationId: null,
+          reason: "password_changed",
+          occurredAt: "2026-08-09T10:00:00.000Z",
+          metadata: {},
+        },
+      },
+    ]);
+    expect(eventDeliveries).toEqual([
+      { eventId: "password-event-1", applicationId: "app-1" },
+      { eventId: "password-event-1", applicationId: "app-2" },
+    ]);
+    expect(getTransactionCount()).toBe(1);
   });
 
   it("throws not found when updating missing user", async () => {

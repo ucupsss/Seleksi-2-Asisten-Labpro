@@ -86,7 +86,8 @@ function createRepository() {
       for (const session of sessions.values()) {
         if (
           session.appKey === input.appKey &&
-          session.centralSessionId === input.centralSessionId &&
+          (input.centralSessionId === null ||
+            session.centralSessionId === input.centralSessionId) &&
           session.externalUserId === input.externalUserId &&
           session.status === "active"
         ) {
@@ -238,5 +239,41 @@ describe("relying app server", () => {
       });
 
     expect(response.status).toBe(401);
+  });
+
+  it("accepts user-wide password change revocation events", async () => {
+    const response = await request(createTestApp())
+      .post("/internal/logout")
+      .set("x-internal-secret", "internal-secret")
+      .send({
+        eventId: "event-password-1",
+        eventType: "PasswordChanged",
+        userId: "user-1",
+        centralSessionId: null,
+        applicationId: null,
+        reason: "password_changed",
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      alreadyProcessed: false,
+      revokedCount: 0,
+    });
+  });
+
+  it("rejects session revocation without a central session id", async () => {
+    const response = await request(createTestApp())
+      .post("/internal/logout")
+      .set("x-internal-secret", "internal-secret")
+      .send({
+        eventId: "event-session-1",
+        eventType: "SessionRevoked",
+        userId: "user-1",
+        centralSessionId: null,
+        applicationId: null,
+        reason: "sso_logout",
+      });
+
+    expect(response.status).toBe(400);
   });
 });

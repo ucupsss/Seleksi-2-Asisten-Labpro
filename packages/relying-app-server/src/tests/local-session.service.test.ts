@@ -69,6 +69,7 @@ function createRepository(appKey = "app-a") {
       for (const session of sessions.values()) {
         const appMatches = !input.appKey || session.appKey === input.appKey;
         const centralSessionMatches =
+          input.centralSessionId === null ||
           session.centralSessionId === input.centralSessionId;
         const userMatches = session.externalUserId === input.externalUserId;
 
@@ -204,5 +205,45 @@ describe("local session service", () => {
     expect(first).toEqual({ alreadyProcessed: false, revokedCount: 1 });
     expect(second).toEqual({ alreadyProcessed: true, revokedCount: 0 });
     expect(processedEvents).toEqual(new Set(["app-a:event-1"]));
+  });
+
+  it("revokes every user session when password changes", async () => {
+    const { service, sessions } = createRepository();
+    sessions.set("session-token-1", {
+      id: "local-session-1",
+      appKey: "app-a",
+      sessionTokenHash: "session-token-1",
+      externalUserId: "user-1",
+      centralSessionId: "central-session-1",
+      status: "active",
+      createdAt: new Date("2026-08-09T09:00:00.000Z"),
+      expiresAt: new Date("2026-08-09T11:00:00.000Z"),
+      revokedAt: null,
+    });
+    sessions.set("session-token-2", {
+      id: "local-session-2",
+      appKey: "app-a",
+      sessionTokenHash: "session-token-2",
+      externalUserId: "user-1",
+      centralSessionId: "central-session-2",
+      status: "active",
+      createdAt: new Date("2026-08-09T09:30:00.000Z"),
+      expiresAt: new Date("2026-08-09T11:30:00.000Z"),
+      revokedAt: null,
+    });
+
+    const result = await service.processInternalLogout({
+      eventId: "event-password-1",
+      eventType: "PasswordChanged",
+      externalUserId: "user-1",
+      centralSessionId: null,
+      reason: "password_changed",
+    });
+
+    expect(result).toEqual({ alreadyProcessed: false, revokedCount: 2 });
+    expect([...sessions.values()].map((session) => session.status)).toEqual([
+      "revoked",
+      "revoked",
+    ]);
   });
 });

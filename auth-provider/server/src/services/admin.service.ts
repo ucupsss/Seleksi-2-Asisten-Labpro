@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import bcrypt from "bcrypt";
+import type { RevocationEventPayload } from "@sso/shared";
 import type {
   Prisma,
   PrismaClient,
@@ -54,6 +56,9 @@ export interface EventSummary {
 }
 
 export interface AdminRepository {
+  withTransaction<T>(
+    work: (repository: AdminRepository) => Promise<T>,
+  ): Promise<T>;
   listUsers(): Promise<AdminUserRecord[]>;
   findUserByEmail(email: string): Promise<AdminUserRecord | null>;
   createUser(input: {
@@ -71,7 +76,11 @@ export interface AdminRepository {
       status?: AdminUserStatus;
     },
   ): Promise<AdminUserRecord | null>;
-  revokeActiveSessionsForUser(userId: string, reason: string): Promise<void>;
+  revokeActiveSessionsForUser(
+    userId: string,
+    reason: string,
+    revokedAt: Date,
+  ): Promise<void>;
   listGroups(): Promise<GroupSummary[]>;
   findGroupByName(name: string): Promise<GroupSummary | null>;
   createGroup(input: {
@@ -100,10 +109,14 @@ export interface AdminRepository {
     metadata?: Record<string, unknown>;
   }): Promise<void>;
   createEvent(input: {
+    id: string;
     eventType: string;
     userId: string;
-    applicationId?: string;
-    payload: Record<string, unknown>;
+    payload: RevocationEventPayload;
+  }): Promise<void>;
+  createEventDelivery(input: {
+    eventId: string;
+    applicationId: string;
   }): Promise<void>;
   listAuditLogs(): Promise<AuditLogSummary[]>;
   listEvents(): Promise<EventSummary[]>;
@@ -158,6 +171,7 @@ export interface AdminServiceDependencies {
   repository: AdminRepository;
   hashPassword?: (plainPassword: string) => Promise<string>;
   now?: () => Date;
+  generateEventId?: () => string;
 }
 
 function toUserSummary(user: AdminUserRecord): UserSummary {
@@ -176,6 +190,7 @@ function duplicate(message: string) {
 export function createAdminService(deps: AdminServiceDependencies): AdminService {
   const hashPassword = deps.hashPassword ?? ((plain) => bcrypt.hash(plain, 12));
   const now = deps.now ?? (() => new Date());
+  const generateEventId = deps.generateEventId ?? (() => randomUUID());
 
   return {
     async listUsers() {
@@ -210,27 +225,31 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
       const passwordHash = input.password
         ? await hashPassword(input.password)
         : undefined;
-      const user = await deps.repository.updateUser(id, {
-        name: input.name,
-        email: input.email,
-        passwordHash,
-        status: input.status,
-      });
+      return deps.repository.withTransaction(async (repository) => {
+        const user = await repository.updateUser(id, {
+          name: input.name,
+          email: input.email,
+          passwordHash,
+          status: input.status,
+        });
 
-      if (!user) {
-        throw notFoundError();
-      }
+        if (!user) {
+          throw notFoundError();
+        }
 
-      if (passwordHash) {
-        const occurredAt = now();
-        await deps.repository.revokeActiveSessionsForUser(
-          user.id,
-          "password_changed",
-        );
-        await deps.repository.createEvent({
-          eventType: "PasswordChanged",
-          userId: user.id,
-          payload: {
+        if (passwordHash) {
+          const occurredAt = now();
+          const eventId = generateEventId();
+          await repository.revokeActiveSessionsForUser(
+            user.id,
+            "password_changed",
+            occurredAt,
+          );
+          const applications = (await repository.listApplications()).filter(
+            (application) => application.status === "active",
+          );
+          const payload: RevocationEventPayload = {
+            eventId,
             eventType: "PasswordChanged",
             userId: user.id,
             centralSessionId: null,
@@ -238,17 +257,31 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
             reason: "password_changed",
             occurredAt: occurredAt.toISOString(),
             metadata: {},
-          },
+          };
+          await repository.createEvent({
+            id: eventId,
+            eventType: "PasswordChanged",
+            userId: user.id,
+            payload,
+          });
+          await Promise.all(
+            applications.map((application) =>
+              repository.createEventDelivery({
+                eventId,
+                applicationId: application.id,
+              }),
+            ),
+          );
+        }
+
+        await repository.createAuditLog({
+          eventType: "admin_user_updated",
+          result: "success",
+          userId: user.id,
         });
-      }
 
-      await deps.repository.createAuditLog({
-        eventType: "admin_user_updated",
-        result: "success",
-        userId: user.id,
+        return toUserSummary(user);
       });
-
-      return toUserSummary(user);
     },
 
     async listGroups() {
@@ -346,9 +379,18 @@ function toApplicationSummary(application: {
 }
 
 export function createPrismaAdminRepository(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
 ): AdminRepository {
-  return {
+  const repository: AdminRepository = {
+    async withTransaction(work) {
+      if (!("$transaction" in prisma)) {
+        return work(repository);
+      }
+
+      return prisma.$transaction(async (transaction) =>
+        work(createPrismaAdminRepository(transaction)),
+      );
+    },
     async listUsers() {
       return prisma.user.findMany({
         orderBy: { createdAt: "asc" },
@@ -394,7 +436,18 @@ export function createPrismaAdminRepository(
       }
     },
 
-    async revokeActiveSessionsForUser(userId, reason) {
+    async revokeActiveSessionsForUser(userId, reason, revokedAt) {
+      await prisma.accessToken.updateMany({
+        where: {
+          userId,
+          status: "active",
+          revokedAt: null,
+        },
+        data: {
+          status: "revoked",
+          revokedAt,
+        },
+      });
       await prisma.ssoSession.updateMany({
         where: {
           userId,
@@ -403,7 +456,7 @@ export function createPrismaAdminRepository(
         },
         data: {
           status: "revoked",
-          revokedAt: new Date(),
+          revokedAt,
           revokeReason: reason,
         },
       });
@@ -512,12 +565,16 @@ export function createPrismaAdminRepository(
     async createEvent(input) {
       await prisma.event.create({
         data: {
+          id: input.id,
           eventType: input.eventType,
           userId: input.userId,
-          applicationId: input.applicationId,
-          payload: input.payload as Prisma.InputJsonValue,
+          payload: input.payload as unknown as Prisma.InputJsonValue,
         },
       });
+    },
+
+    async createEventDelivery(input) {
+      await prisma.eventDelivery.create({ data: input });
     },
 
     async listAuditLogs() {
@@ -546,4 +603,6 @@ export function createPrismaAdminRepository(
       });
     },
   };
+
+  return repository;
 }
