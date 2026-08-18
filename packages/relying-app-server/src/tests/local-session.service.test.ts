@@ -10,7 +10,13 @@ function createRepository(appKey = "app-a") {
   const sessions = new Map<string, LocalSessionRecord>();
   const profiles = new Map<string, ProfileRecord>();
   const processedEvents = new Set<string>();
-  const activityLogs: Array<{ appKey: string; eventType: string }> = [];
+  const activityLogs: Array<{
+    appKey: string;
+    eventType: string;
+    message: string;
+    requestId?: string;
+    correlationId?: string;
+  }> = [];
 
   const repository: LocalSessionRepository = {
     createLocalSession: async (input) => {
@@ -55,7 +61,13 @@ function createRepository(appKey = "app-a") {
       return profile;
     },
     createActivityLog: async (input) => {
-      activityLogs.push({ appKey: input.appKey, eventType: input.eventType });
+      activityLogs.push({
+        appKey: input.appKey,
+        eventType: input.eventType,
+        message: input.message,
+        requestId: input.requestId,
+        correlationId: input.correlationId,
+      });
     },
     listActivityLogs: async (input) =>
       activityLogs
@@ -65,7 +77,9 @@ function createRepository(appKey = "app-a") {
           id: `log-${index + 1}`,
           appKey: log.appKey,
           eventType: log.eventType,
-          message: "Recorded activity",
+          message: log.message,
+          requestId: log.requestId ?? null,
+          correlationId: log.correlationId ?? null,
           createdAt: new Date("2026-08-09T10:00:00.000Z"),
         })),
     findProcessedEvent: async (input) =>
@@ -125,13 +139,16 @@ describe("local session service", () => {
   it("creates local session after userinfo is available", async () => {
     const { service, sessions, profiles, activityLogs } = createRepository();
 
-    const result = await service.createSessionFromUserInfo({
-      sub: "user-1",
-      name: "Student User",
-      email: "student@example.com",
-      groups: ["app-a-users"],
-      centralSessionId: "central-session-1",
-    });
+    const result = await service.createSessionFromUserInfo(
+      {
+        sub: "user-1",
+        name: "Student User",
+        email: "student@example.com",
+        groups: ["app-a-users"],
+        centralSessionId: "central-session-1",
+      },
+      { requestId: "request-1", correlationId: "state-1" },
+    );
 
     expect(result.sessionToken).toBe("raw-local-session-token");
     expect(result.session.expiresAt.toISOString()).toBe(
@@ -142,9 +159,34 @@ describe("local session service", () => {
       name: "Student User",
       groups: ["app-a-users"],
     });
+    expect(activityLogs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          appKey: "app-a",
+          eventType: "local_login_success",
+          requestId: "request-1",
+          correlationId: "state-1",
+        }),
+      ]),
+    );
+  });
+
+  it("records an SSO activity stage with trace identifiers", async () => {
+    const { service, activityLogs } = createRepository();
+
+    await service.recordActivity({
+      eventType: "authorization_code_received",
+      message: "Authorization code received by the callback.",
+      requestId: "request-2",
+      correlationId: "state-2",
+    });
+
     expect(activityLogs).toContainEqual({
       appKey: "app-a",
-      eventType: "local_login_success",
+      eventType: "authorization_code_received",
+      message: "Authorization code received by the callback.",
+      requestId: "request-2",
+      correlationId: "state-2",
     });
   });
 

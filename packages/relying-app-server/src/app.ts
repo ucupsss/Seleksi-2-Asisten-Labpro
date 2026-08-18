@@ -82,6 +82,10 @@ function createRequestId() {
   return randomToken(8);
 }
 
+function getRequestId(res: express.Response) {
+  return String(res.locals.requestId);
+}
+
 function serializeSessionView(view: Awaited<ReturnType<LocalSessionService["getCurrentSession"]>>) {
   if (view.status === "anonymous") {
     return view;
@@ -136,6 +140,12 @@ export function createAppServer(
   app.use(cors({ origin: config.allowedWebOrigins, credentials: true }));
   app.use(express.json());
   app.use(cookieParser());
+  app.use((req, res, next) => {
+    const requestId = req.header("x-request-id")?.trim() || createRequestId();
+    res.locals.requestId = requestId;
+    res.setHeader("x-request-id", requestId);
+    next();
+  });
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -155,6 +165,14 @@ export function createAppServer(
         redirectUri: config.redirectUri,
         state,
         codeChallenge: pkceChallenge(codeVerifier),
+      });
+
+      await localSessionService.recordActivity({
+        eventType: "sso_redirect_started",
+        message: "Browser redirected to the Auth Provider.",
+        requestId: getRequestId(res),
+        correlationId: state,
+        metadata: { clientId: config.clientId },
       });
 
       res.cookie("oauth_state", state, cookieOptions(pendingCookieMaxAgeMs));
@@ -185,15 +203,39 @@ export function createAppServer(
         throw new HttpError(400, "INVALID_REQUEST", "State SSO tidak valid");
       }
 
+      const activityContext = {
+        requestId: getRequestId(res),
+        correlationId: parsed.data.state,
+      };
+      await localSessionService.recordActivity({
+        ...activityContext,
+        eventType: "authorization_code_received",
+        message: "Authorization code received by the callback.",
+      });
+
       const token = await oauthClient.exchangeCode({
         code: parsed.data.code,
         clientId: config.clientId,
         redirectUri: config.redirectUri,
         codeVerifier: req.cookies.pkce_verifier,
       });
+      await localSessionService.recordActivity({
+        ...activityContext,
+        eventType: "authorization_code_exchanged",
+        message: "Authorization code exchanged through the back channel.",
+      });
       const userInfo = await oauthClient.getUserInfo(token.access_token);
+      await localSessionService.recordActivity({
+        ...activityContext,
+        eventType: "userinfo_received",
+        message: "User identity retrieved from the Auth Provider.",
+        metadata: { externalUserId: userInfo.sub },
+      });
       const localSession =
-        await localSessionService.createSessionFromUserInfo(userInfo);
+        await localSessionService.createSessionFromUserInfo(
+          userInfo,
+          activityContext,
+        );
 
       clearCookie(res, "oauth_state");
       clearCookie(res, "pkce_verifier");
@@ -269,7 +311,10 @@ export function createAppServer(
 
   app.post("/logout", async (req, res, next) => {
     try {
-      await localSessionService.logout(req.cookies[config.localSessionCookieName]);
+      await localSessionService.logout(
+        req.cookies[config.localSessionCookieName],
+        { requestId: getRequestId(res) },
+      );
       clearCookie(res, config.localSessionCookieName);
       res.status(204).end();
     } catch (error) {
@@ -296,6 +341,8 @@ export function createAppServer(
         centralSessionId: parsed.data.centralSessionId,
         appKey: parsed.data.appKey,
         reason: parsed.data.reason,
+        requestId: getRequestId(res),
+        correlationId: parsed.data.eventId,
       });
       res.json(result);
     } catch (error) {
@@ -314,7 +361,7 @@ export function createAppServer(
       res: express.Response,
       _next: express.NextFunction,
     ) => {
-      const requestId = createRequestId();
+      const requestId = getRequestId(res);
 
       if (error instanceof HttpError) {
         res

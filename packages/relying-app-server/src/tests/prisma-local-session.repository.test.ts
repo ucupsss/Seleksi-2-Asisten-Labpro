@@ -44,6 +44,8 @@ describe("Prisma local session repository", () => {
         appKey: true,
         eventType: true,
         message: true,
+        requestId: true,
+        correlationId: true,
         createdAt: true,
       },
       orderBy: { createdAt: "desc" },

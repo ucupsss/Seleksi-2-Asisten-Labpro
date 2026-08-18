@@ -130,6 +130,8 @@ export function createPrismaLocalSessionRepository(
           appKey: input.appKey,
           eventType: input.eventType,
           message: input.message,
+          requestId: input.requestId,
+          correlationId: input.correlationId,
           metadata: input.metadata as Prisma.InputJsonValue | undefined,
         },
       });
@@ -143,6 +145,8 @@ export function createPrismaLocalSessionRepository(
           appKey: true,
           eventType: true,
           message: true,
+          requestId: true,
+          correlationId: true,
           createdAt: true,
         },
         orderBy: { createdAt: "desc" },

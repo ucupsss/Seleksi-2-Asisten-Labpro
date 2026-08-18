@@ -30,6 +30,15 @@ function createRepository() {
   const sessions = new Map<string, LocalSessionRecord>();
   const profiles = new Map<string, ProfileRecord>();
   const processedEvents = new Set<string>();
+  const activityLogs: Array<{
+    id: string;
+    appKey: string;
+    eventType: string;
+    message: string;
+    requestId: string | null;
+    correlationId: string | null;
+    createdAt: Date;
+  }> = [];
 
   const repository: LocalSessionRepository = {
     createLocalSession: async (input) => {
@@ -73,16 +82,22 @@ function createRepository() {
       profiles.set(`${input.appKey}:${input.externalUserId}`, profile);
       return profile;
     },
-    createActivityLog: async () => {},
-    listActivityLogs: async (input) => [
-      {
-        id: "log-1",
+    createActivityLog: async (input) => {
+      activityLogs.push({
+        id: `log-${activityLogs.length + 1}`,
         appKey: input.appKey,
-        eventType: "local_login_success",
-        message: "Local session created from SSO userinfo.",
+        eventType: input.eventType,
+        message: input.message,
+        requestId: input.requestId ?? null,
+        correlationId: input.correlationId ?? null,
         createdAt: new Date("2026-08-09T10:00:00.000Z"),
-      },
-    ].slice(0, input.limit),
+      });
+    },
+    listActivityLogs: async (input) =>
+      activityLogs
+        .filter((log) => log.appKey === input.appKey)
+        .reverse()
+        .slice(0, input.limit),
     findProcessedEvent: async (input) =>
       processedEvents.has(`${input.appKey}:${input.eventId}`)
         ? { appKey: input.appKey, eventId: input.eventId }
@@ -233,20 +248,27 @@ describe("relying app server", () => {
 
     const response = await request(app)
       .get("/activity-logs?limit=10")
-      .set("Cookie", [sessionCookie ?? ""]);
+      .set("Cookie", [sessionCookie ?? ""])
+      .set("x-request-id", "request-activity-1");
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      logs: [
-        {
-          id: "log-1",
+    expect(response.body.logs).toHaveLength(4);
+    expect(response.body.logs.map((log: { eventType: string }) => log.eventType))
+      .toEqual([
+        "local_login_success",
+        "userinfo_received",
+        "authorization_code_exchanged",
+        "authorization_code_received",
+      ]);
+    expect(response.body.logs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
           appKey: "app-a",
-          eventType: "local_login_success",
-          message: "Local session created from SSO userinfo.",
-          createdAt: "2026-08-09T10:00:00.000Z",
-        },
-      ],
-    });
+          correlationId: "state-1",
+          requestId: expect.any(String),
+        }),
+      ]),
+    );
   });
 
   it("returns database-backed processed events for an authenticated local session", async () => {

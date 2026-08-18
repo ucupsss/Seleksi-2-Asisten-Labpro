@@ -32,7 +32,14 @@ export interface ActivityLogRecord {
   appKey: string;
   eventType: string;
   message: string;
+  requestId: string | null;
+  correlationId: string | null;
   createdAt: Date;
+}
+
+export interface ActivityContext {
+  requestId?: string;
+  correlationId?: string;
 }
 
 export interface ProcessedEventRecord {
@@ -72,6 +79,8 @@ export interface LocalSessionRepository {
     appKey: string;
     eventType: string;
     message: string;
+    requestId?: string;
+    correlationId?: string;
     metadata?: Record<string, unknown>;
   }): Promise<void>;
   listActivityLogs(input: {
@@ -119,9 +128,18 @@ export type LocalSessionView =
 export interface LocalSessionService {
   createSessionFromUserInfo(
     userInfo: UserInfoResponse,
+    context?: ActivityContext,
   ): Promise<{ sessionToken: string; session: LocalSessionRecord }>;
   getCurrentSession(sessionToken: string | undefined): Promise<LocalSessionView>;
-  logout(sessionToken: string | undefined): Promise<void>;
+  logout(
+    sessionToken: string | undefined,
+    context?: ActivityContext,
+  ): Promise<void>;
+  recordActivity(input: ActivityContext & {
+    eventType: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void>;
   listActivityLogs(limit: number): Promise<ActivityLogRecord[]>;
   listProcessedEvents(limit: number): Promise<ProcessedEventRecord[]>;
   processInternalLogout(input: {
@@ -131,6 +149,8 @@ export interface LocalSessionService {
     centralSessionId: string | null;
     reason: string;
     appKey?: string | null;
+    requestId?: string;
+    correlationId?: string;
   }): Promise<{ alreadyProcessed: boolean; revokedCount: number }>;
 }
 
@@ -149,7 +169,7 @@ export function createLocalSessionService(
   const now = deps.now ?? (() => new Date());
 
   return {
-    async createSessionFromUserInfo(userInfo) {
+    async createSessionFromUserInfo(userInfo, context) {
       const currentTime = now();
       const sessionToken = generateToken();
 
@@ -174,6 +194,8 @@ export function createLocalSessionService(
         appKey: deps.appKey,
         eventType: "local_login_success",
         message: "Local session created from SSO userinfo.",
+        requestId: context?.requestId,
+        correlationId: context?.correlationId,
         metadata: {
           externalUserId: userInfo.sub,
           centralSessionId: userInfo.centralSessionId,
@@ -212,7 +234,7 @@ export function createLocalSessionService(
       };
     },
 
-    async logout(sessionToken) {
+    async logout(sessionToken, context) {
       if (!sessionToken) {
         return;
       }
@@ -228,12 +250,25 @@ export function createLocalSessionService(
           appKey: deps.appKey,
           eventType: "local_logout",
           message: "Local session revoked by relying app logout.",
+          requestId: context?.requestId,
+          correlationId: context?.correlationId,
           metadata: {
             externalUserId: session.externalUserId,
             centralSessionId: session.centralSessionId,
           },
         });
       }
+    },
+
+    async recordActivity(input) {
+      await deps.repository.createActivityLog({
+        appKey: deps.appKey,
+        eventType: input.eventType,
+        message: input.message,
+        requestId: input.requestId,
+        correlationId: input.correlationId,
+        metadata: input.metadata,
+      });
     },
 
     async listActivityLogs(limit) {
@@ -275,6 +310,8 @@ export function createLocalSessionService(
         appKey: deps.appKey,
         eventType: "internal_logout_processed",
         message: "Internal logout event processed.",
+        requestId: input.requestId,
+        correlationId: input.correlationId ?? input.eventId,
         metadata: {
           eventId: input.eventId,
           revokedCount,

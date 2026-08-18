@@ -45,6 +45,8 @@ interface ActivityLogEntry {
   id: string;
   eventType: string;
   message: string;
+  requestId: string | null;
+  correlationId: string | null;
   createdAt: string;
 }
 
@@ -305,13 +307,14 @@ export function App() {
                 <TableRow>
                   <TableHead>Event</TableHead>
                   <TableHead>Message</TableHead>
+                  <TableHead>Trace</TableHead>
                   <TableHead>Time</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {activityLogs.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={3} className="text-muted-foreground">
+                    <TableCell colSpan={4} className="text-muted-foreground">
                       No activity recorded yet.
                     </TableCell>
                   </TableRow>
@@ -319,6 +322,12 @@ export function App() {
                   <TableRow key={log.id}>
                     <TableCell><Badge variant="outline">{log.eventType}</Badge></TableCell>
                     <TableCell>{log.message}</TableCell>
+                    <TableCell
+                      className="max-w-28 truncate font-mono text-xs"
+                      title={log.correlationId ?? log.requestId ?? undefined}
+                    >
+                      {log.correlationId ?? log.requestId ?? "-"}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-muted-foreground">
                       {new Date(log.createdAt).toLocaleString()}
                     </TableCell>
