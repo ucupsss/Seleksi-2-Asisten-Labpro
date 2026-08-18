@@ -354,6 +354,33 @@ describe("oauth service", () => {
     });
   });
 
+  it("rejects exchange when the application becomes inactive", async () => {
+    const { repository, codes } = createRepository();
+    const service = createService(repository);
+    await service.createAuthorizationCode({
+      userId: "user-1",
+      ssoSessionId: "session-1",
+      clientId: "app-a-client",
+      redirectUri: "http://localhost:4101/auth/callback",
+      state: "state-1",
+      codeChallenge: s256("verifier-1"),
+    });
+    const storedApplication = [...codes.values()][0]!.application as {
+      status: "active" | "inactive";
+    };
+    storedApplication.status = "inactive";
+
+    await expect(
+      service.exchangeAuthorizationCode({
+        code: "raw-code",
+        clientId: "app-a-client",
+        redirectUri: "http://localhost:4101/auth/callback",
+        codeVerifier: "verifier-1",
+      }),
+    ).rejects.toMatchObject({ status: 400, code: "INVALID_GRANT" });
+    storedApplication.status = "active";
+  });
+
   it("returns userinfo for valid token", async () => {
     const { repository } = createRepository();
     const service = createService(repository);

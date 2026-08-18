@@ -178,7 +178,7 @@ function LoginPage() {
   const [email, setEmail] = useState(
     returnTo === "/admin" ? "admin@example.com" : "student@example.com",
   );
-  const [password, setPassword] = useState("password123");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const signedOut =
@@ -271,13 +271,32 @@ function AdminPage() {
     email: "",
     password: "",
   });
+  const [userEditForm, setUserEditForm] = useState<{
+    id: string;
+    name: string;
+    email: string;
+    password: string;
+  } | null>(null);
   const [groupForm, setGroupForm] = useState({ name: "", description: "" });
+  const [groupEditForm, setGroupEditForm] = useState<{
+    id: string;
+    name: string;
+    description: string;
+  } | null>(null);
   const [appForm, setAppForm] = useState({
     name: "",
     clientId: "",
+    launchUrl: "",
     redirectUri: "",
     logoutNotificationUrl: "",
   });
+  const [appEditForm, setAppEditForm] = useState<{
+    id: string;
+    name: string;
+    launchUrl: string;
+    redirectUri: string;
+    logoutNotificationUrl: string;
+  } | null>(null);
   const [policyForm, setPolicyForm] = useState({
     applicationId: "",
     groupId: "",
@@ -391,6 +410,21 @@ function AdminPage() {
     await loadAdminData();
   }
 
+  async function updateUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!userEditForm) return;
+    await apiJson(`/admin/users/${userEditForm.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: userEditForm.name,
+        email: userEditForm.email,
+        ...(userEditForm.password ? { password: userEditForm.password } : {}),
+      }),
+    });
+    setUserEditForm(null);
+    await loadAdminData();
+  }
+
   async function createGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await apiJson("/admin/groups", {
@@ -404,17 +438,61 @@ function AdminPage() {
     await loadAdminData();
   }
 
+  async function updateGroup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!groupEditForm) return;
+    await apiJson(`/admin/groups/${groupEditForm.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: groupEditForm.name,
+        description: groupEditForm.description || null,
+      }),
+    });
+    setGroupEditForm(null);
+    await loadAdminData();
+  }
+
   async function createApplication(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await apiJson("/admin/applications", {
       method: "POST",
-      body: JSON.stringify(appForm),
+      body: JSON.stringify({
+        ...appForm,
+        launchUrl: appForm.launchUrl || null,
+      }),
     });
     setAppForm({
       name: "",
       clientId: "",
+      launchUrl: "",
       redirectUri: "",
       logoutNotificationUrl: "",
+    });
+    await loadAdminData();
+  }
+
+  async function updateApplication(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!appEditForm) return;
+    await apiJson(`/admin/applications/${appEditForm.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: appEditForm.name,
+        launchUrl: appEditForm.launchUrl || null,
+        redirectUri: appEditForm.redirectUri,
+        logoutNotificationUrl: appEditForm.logoutNotificationUrl,
+      }),
+    });
+    setAppEditForm(null);
+    await loadAdminData();
+  }
+
+  async function toggleApplicationStatus(application: Application) {
+    await apiJson(`/admin/applications/${application.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        status: application.status === "active" ? "inactive" : "active",
+      }),
     });
     await loadAdminData();
   }
@@ -612,7 +690,21 @@ function AdminPage() {
                             {user.status}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="space-x-2 text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setUserEditForm({
+                                id: user.id,
+                                name: user.name,
+                                email: user.email,
+                                password: "",
+                              })
+                            }
+                          >
+                            Edit
+                          </Button>
                           <Button
                             size="sm"
                             variant="outline"
@@ -641,6 +733,66 @@ function AdminPage() {
                     Create user
                   </Button>
                 </form>
+                {userEditForm ? (
+                  <>
+                    <Separator className="my-5" />
+                    <form className="space-y-3" onSubmit={updateUser}>
+                      <p className="text-sm font-medium">Update user</p>
+                      <Input
+                        aria-label="Update user name"
+                        value={userEditForm.name}
+                        onChange={(event) =>
+                          setUserEditForm({
+                            ...userEditForm,
+                            name: event.target.value,
+                          })
+                        }
+                      />
+                      <Input
+                        aria-label="Update user email"
+                        type="email"
+                        value={userEditForm.email}
+                        onChange={(event) =>
+                          setUserEditForm({
+                            ...userEditForm,
+                            email: event.target.value,
+                          })
+                        }
+                      />
+                      <Input
+                        aria-label="New user password"
+                        type="password"
+                        placeholder="Leave blank to keep current password"
+                        value={userEditForm.password}
+                        onChange={(event) =>
+                          setUserEditForm({
+                            ...userEditForm,
+                            password: event.target.value,
+                          })
+                        }
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          disabled={
+                            !userEditForm.name ||
+                            !userEditForm.email ||
+                            (userEditForm.password.length > 0 &&
+                              userEditForm.password.length < 8)
+                          }
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setUserEditForm(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  </>
+                ) : null}
               </CardContent>
             </Card>
           </div>
@@ -659,6 +811,7 @@ function AdminPage() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Description</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -666,6 +819,21 @@ function AdminPage() {
                       <TableRow key={group.id}>
                         <TableCell>{group.name}</TableCell>
                         <TableCell>{group.description ?? "-"}</TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setGroupEditForm({
+                                id: group.id,
+                                name: group.name,
+                                description: group.description ?? "",
+                              })
+                            }
+                          >
+                            Edit
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -685,6 +853,44 @@ function AdminPage() {
                     Create group
                   </Button>
                 </form>
+                {groupEditForm ? (
+                  <>
+                    <Separator className="my-5" />
+                    <form className="space-y-3" onSubmit={updateGroup}>
+                      <p className="text-sm font-medium">Update group</p>
+                      <Input
+                        aria-label="Update group name"
+                        value={groupEditForm.name}
+                        onChange={(event) =>
+                          setGroupEditForm({
+                            ...groupEditForm,
+                            name: event.target.value,
+                          })
+                        }
+                      />
+                      <Input
+                        aria-label="Update group description"
+                        value={groupEditForm.description}
+                        onChange={(event) =>
+                          setGroupEditForm({
+                            ...groupEditForm,
+                            description: event.target.value,
+                          })
+                        }
+                      />
+                      <div className="flex gap-2">
+                        <Button disabled={!groupEditForm.name}>Save</Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setGroupEditForm(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  </>
+                ) : null}
               </CardContent>
             </Card>
             <Card>
@@ -739,6 +945,8 @@ function AdminPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Client ID</TableHead>
                       <TableHead>Redirect URI</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -747,6 +955,46 @@ function AdminPage() {
                         <TableCell>{application.name}</TableCell>
                         <TableCell>{application.clientId}</TableCell>
                         <TableCell>{application.redirectUris[0] ?? "-"}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              application.status === "active"
+                                ? "success"
+                                : "warning"
+                            }
+                          >
+                            {application.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="space-x-2 text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setAppEditForm({
+                                id: application.id,
+                                name: application.name,
+                                launchUrl: application.launchUrl ?? "",
+                                redirectUri: application.redirectUris[0] ?? "",
+                                logoutNotificationUrl:
+                                  application.logoutNotificationUrl,
+                              })
+                            }
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              void toggleApplicationStatus(application)
+                            }
+                          >
+                            {application.status === "active"
+                              ? "Deactivate"
+                              : "Activate"}
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -761,6 +1009,7 @@ function AdminPage() {
                 <form className="space-y-3" onSubmit={createApplication}>
                   <Input placeholder="App A" value={appForm.name} onChange={(event) => setAppForm({ ...appForm, name: event.target.value })} />
                   <Input placeholder="app-a-client" value={appForm.clientId} onChange={(event) => setAppForm({ ...appForm, clientId: event.target.value })} />
+                  <Input placeholder="Launch URL" value={appForm.launchUrl} onChange={(event) => setAppForm({ ...appForm, launchUrl: event.target.value })} />
                   <Input placeholder="Redirect URI" value={appForm.redirectUri} onChange={(event) => setAppForm({ ...appForm, redirectUri: event.target.value })} />
                   <Input placeholder="Logout notification URL" value={appForm.logoutNotificationUrl} onChange={(event) => setAppForm({ ...appForm, logoutNotificationUrl: event.target.value })} />
                   <Button className="w-full">
@@ -768,6 +1017,73 @@ function AdminPage() {
                     Register app
                   </Button>
                 </form>
+                {appEditForm ? (
+                  <>
+                    <Separator className="my-5" />
+                    <form className="space-y-3" onSubmit={updateApplication}>
+                      <p className="text-sm font-medium">Update application</p>
+                      <Input
+                        aria-label="Update application name"
+                        value={appEditForm.name}
+                        onChange={(event) =>
+                          setAppEditForm({
+                            ...appEditForm,
+                            name: event.target.value,
+                          })
+                        }
+                      />
+                      <Input
+                        aria-label="Update application launch URL"
+                        placeholder="Launch URL"
+                        value={appEditForm.launchUrl}
+                        onChange={(event) =>
+                          setAppEditForm({
+                            ...appEditForm,
+                            launchUrl: event.target.value,
+                          })
+                        }
+                      />
+                      <Input
+                        aria-label="Update application redirect URI"
+                        value={appEditForm.redirectUri}
+                        onChange={(event) =>
+                          setAppEditForm({
+                            ...appEditForm,
+                            redirectUri: event.target.value,
+                          })
+                        }
+                      />
+                      <Input
+                        aria-label="Update application logout URL"
+                        value={appEditForm.logoutNotificationUrl}
+                        onChange={(event) =>
+                          setAppEditForm({
+                            ...appEditForm,
+                            logoutNotificationUrl: event.target.value,
+                          })
+                        }
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          disabled={
+                            !appEditForm.name ||
+                            !appEditForm.redirectUri ||
+                            !appEditForm.logoutNotificationUrl
+                          }
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setAppEditForm(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </form>
+                  </>
+                ) : null}
               </CardContent>
             </Card>
           </div>

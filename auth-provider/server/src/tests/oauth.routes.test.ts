@@ -1,6 +1,7 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createAuthApp } from "../app.js";
+import { testAuthConfig } from "./test-config.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { OauthService } from "../services/oauth.service.js";
 
@@ -55,6 +56,7 @@ describe("oauth routes", () => {
   it("redirects authorize request to app callback when central session exists", async () => {
     const response = await request(
       createAuthApp({
+        config: testAuthConfig,
         authService: createFakeAuthService(),
         oauthService: createFakeOauthService(),
       }),
@@ -79,6 +81,7 @@ describe("oauth routes", () => {
   it("redirects authorize request to login when central session is missing", async () => {
     const response = await request(
       createAuthApp({
+        config: testAuthConfig,
         authService: createFakeAuthService(null),
         oauthService: createFakeOauthService(),
       }),
@@ -101,6 +104,7 @@ describe("oauth routes", () => {
   it("exchanges authorization code for token", async () => {
     const response = await request(
       createAuthApp({
+        config: testAuthConfig,
         authService: createFakeAuthService(),
         oauthService: createFakeOauthService(),
       }),
@@ -125,6 +129,7 @@ describe("oauth routes", () => {
   it("returns userinfo for bearer token", async () => {
     const response = await request(
       createAuthApp({
+        config: testAuthConfig,
         authService: createFakeAuthService(),
         oauthService: createFakeOauthService(),
       }),

@@ -52,6 +52,8 @@ function createRepository() {
       const revokedTokenLength = revokedApplicationTokens.length;
       const membershipSnapshot = new Set(userGroups);
       const policySnapshot = new Set(applicationPolicies);
+      const groupSnapshot = new Map(groups);
+      const applicationSnapshot = new Map(applications);
       const activeSessionSnapshot = new Map(
         [...activeSessions].map(([userId, sessionIds]) => [
           userId,
@@ -72,6 +74,12 @@ function createRepository() {
         membershipSnapshot.forEach((membership) => userGroups.add(membership));
         applicationPolicies.clear();
         policySnapshot.forEach((policy) => applicationPolicies.add(policy));
+        groups.clear();
+        groupSnapshot.forEach((group, id) => groups.set(id, group));
+        applications.clear();
+        applicationSnapshot.forEach((application, id) =>
+          applications.set(id, application),
+        );
         activeSessions.clear();
         activeSessionSnapshot.forEach((sessionIds, userId) =>
           activeSessions.set(userId, sessionIds),
@@ -115,6 +123,7 @@ function createRepository() {
       return sessionIds;
     },
     listGroups: async () => [...groups.values()],
+    findGroupById: async (id) => groups.get(id) ?? null,
     findGroupByName: async (name) =>
       [...groups.values()].find((group) => group.name === name) ?? null,
     createGroup: async (input) => {
@@ -125,6 +134,18 @@ function createRepository() {
       };
       groups.set(group.id, group);
       return group;
+    },
+    updateGroup: async (id, input) => {
+      const group = groups.get(id);
+      if (!group) return null;
+      const updated = {
+        ...group,
+        name: input.name ?? group.name,
+        description:
+          input.description === undefined ? group.description : input.description,
+      };
+      groups.set(id, updated);
+      return updated;
     },
     addUserToGroup: async (userId, groupId) => {
       userGroups.add(`${userId}:${groupId}`);
@@ -152,6 +173,7 @@ function createRepository() {
       );
     },
     listApplications: async () => [...applications.values()],
+    findApplicationById: async (id) => applications.get(id) ?? null,
     findApplicationByClientId: async (clientId) =>
       [...applications.values()].find((app) => app.clientId === clientId) ??
       null,
@@ -167,6 +189,24 @@ function createRepository() {
       };
       applications.set(application.id, application);
       return application;
+    },
+    updateApplication: async (id, input) => {
+      const application = applications.get(id);
+      if (!application) return null;
+      const updated = {
+        ...application,
+        name: input.name ?? application.name,
+        status: input.status ?? application.status,
+        launchUrl:
+          input.launchUrl === undefined ? application.launchUrl : input.launchUrl,
+        logoutNotificationUrl:
+          input.logoutNotificationUrl ?? application.logoutNotificationUrl,
+        redirectUris: input.redirectUri
+          ? [input.redirectUri]
+          : application.redirectUris,
+      };
+      applications.set(id, updated);
+      return updated;
     },
     addApplicationPolicy: async (applicationId, groupId) => {
       applicationPolicies.add(`${applicationId}:${groupId}:allow`);
@@ -566,6 +606,26 @@ describe("admin service", () => {
     expect(userGroups).toEqual(new Set(["user-1:group-1"]));
   });
 
+  it("updates a group and records the administrative change", async () => {
+    const { repository, auditLogs } = createRepository();
+    const service = createService(repository);
+    const group = await service.createGroup({ name: "old-name" });
+
+    const updated = await service.updateGroup(group.id, {
+      name: "new-name",
+      description: "Updated description",
+    });
+
+    expect(updated).toMatchObject({
+      name: "new-name",
+      description: "Updated description",
+    });
+    expect(auditLogs).toContainEqual({
+      eventType: "admin_group_updated",
+      result: "success",
+    });
+  });
+
   it("creates application and allow policy for a group", async () => {
     const { repository, applicationPolicies } = createRepository();
     const service = createService(repository);
@@ -592,6 +652,47 @@ describe("admin service", () => {
       redirectUris: ["http://localhost:4101/auth/callback"],
     });
     expect(applicationPolicies).toEqual(new Set(["app-1:group-1:allow"]));
+  });
+
+  it("deactivates an application and synchronizes access loss", async () => {
+    const {
+      repository,
+      userGroups,
+      applicationPolicies,
+      events,
+      eventDeliveries,
+      revokedSessions,
+    } = createRepository();
+    const service = createService(repository, ["application-event-1"]);
+    await service.createUser({
+      name: "Student User",
+      email: "student@example.com",
+      password: "password123",
+    });
+    const group = await service.createGroup({ name: "app-a-users" });
+    const application = await service.createApplication({
+      name: "App A",
+      clientId: "app-a-client",
+      redirectUri: "http://localhost:4101/auth/callback",
+      logoutNotificationUrl: "http://localhost:4101/internal/logout",
+    });
+    userGroups.add(`user-1:${group.id}`);
+    applicationPolicies.add(`${application.id}:${group.id}:allow`);
+
+    const updated = await service.updateApplication(application.id, {
+      status: "inactive",
+    });
+
+    expect(updated.status).toBe("inactive");
+    expect(revokedSessions).toHaveLength(1);
+    expect(events[0]?.payload).toMatchObject({
+      eventType: "AccessPolicyChanged",
+      applicationId: application.id,
+      reason: "application_deactivated",
+    });
+    expect(eventDeliveries).toEqual([
+      { eventId: "application-event-1", applicationId: application.id },
+    ]);
   });
 
   it("emits AccessPolicyChanged only when membership removal loses access", async () => {

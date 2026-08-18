@@ -22,6 +22,7 @@ function createRepository(overrides: Partial<AuthRepository> = {}) {
   const auditLogs: Array<{ eventType: string; result: string }> = [];
 
   const repository: AuthRepository = {
+    withTransaction: async (work) => work(repository),
     findUserByEmail: async (email) =>
       email === activeUser.email ? activeUser : null,
     createSsoSession: async (input) => {

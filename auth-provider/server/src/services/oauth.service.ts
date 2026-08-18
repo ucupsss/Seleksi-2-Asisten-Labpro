@@ -164,22 +164,25 @@ export function createOauthService(deps: OauthServiceDependencies): OauthService
       }
 
       const code = generateCode();
-      await deps.repository.createAuthorizationCode({
-        codeHash: sha256Hex(code),
-        userId: decision.user.id,
-        applicationId: decision.application.id,
-        ssoSessionId: input.ssoSessionId,
-        redirectUri: input.redirectUri,
-        codeChallenge: input.codeChallenge,
-        expiresAt: addMinutes(now(), deps.authorizationCodeTtlMinutes),
-      });
+      const currentTime = now();
+      await deps.repository.withTransaction(async (repository) => {
+        await repository.createAuthorizationCode({
+          codeHash: sha256Hex(code),
+          userId: decision.user.id,
+          applicationId: decision.application.id,
+          ssoSessionId: input.ssoSessionId,
+          redirectUri: input.redirectUri,
+          codeChallenge: input.codeChallenge,
+          expiresAt: addMinutes(currentTime, deps.authorizationCodeTtlMinutes),
+        });
 
-      await deps.repository.createAuditLog({
-        eventType: "authorization_code_issued",
-        result: "success",
-        userId: decision.user.id,
-        applicationId: decision.application.id,
-        sessionId: input.ssoSessionId,
+        await repository.createAuditLog({
+          eventType: "authorization_code_issued",
+          result: "success",
+          userId: decision.user.id,
+          applicationId: decision.application.id,
+          sessionId: input.ssoSessionId,
+        });
       });
 
       const redirectUrl = new URL(input.redirectUri);
@@ -213,6 +216,13 @@ export function createOauthService(deps: OauthServiceDependencies): OauthService
 
         if (code.application.clientId !== input.clientId) {
           throw invalidGrant();
+        }
+
+        if (
+          code.application.status !== "active" ||
+          code.user.status !== "active"
+        ) {
+          throw invalidGrant("User atau aplikasi tidak aktif");
         }
 
         if (code.redirectUri !== input.redirectUri) {

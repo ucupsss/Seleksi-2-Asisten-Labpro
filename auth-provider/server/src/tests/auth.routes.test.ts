@@ -1,6 +1,7 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createAuthApp } from "../app.js";
+import { testAuthConfig } from "./test-config.js";
 import { HttpError } from "../errors.js";
 import type { AuthService } from "../services/auth.service.js";
 
@@ -30,7 +31,7 @@ function readSetCookieHeader(response: request.Response): string {
 describe("auth routes", () => {
   it("logs in and sets central session cookie", async () => {
     const response = await request(
-      createAuthApp({ authService: createFakeAuthService() }),
+      createAuthApp({ config: testAuthConfig, authService: createFakeAuthService() }),
     )
       .post("/auth/login")
       .send({
@@ -55,6 +56,7 @@ describe("auth routes", () => {
   it("returns standard error when login fails", async () => {
     const response = await request(
       createAuthApp({
+        config: testAuthConfig,
         authService: createFakeAuthService({
           loginWithPassword: async () => {
             throw new HttpError(
@@ -87,6 +89,7 @@ describe("auth routes", () => {
 
     const response = await request(
       createAuthApp({
+        config: testAuthConfig,
         authService: createFakeAuthService({
           logout: async (sessionToken) => {
             receivedSessionToken = sessionToken;

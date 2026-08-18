@@ -27,6 +27,13 @@ const createGroupBodySchema = z.object({
   description: z.string().min(1).nullable().optional(),
 });
 
+const updateGroupBodySchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    description: z.string().min(1).nullable().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0);
+
 const addUserToGroupBodySchema = z.object({
   userId: z.string().min(1),
 });
@@ -39,6 +46,16 @@ const createApplicationBodySchema = z.object({
   logoutNotificationUrl: z.string().url(),
   redirectUri: z.string().url(),
 });
+
+const updateApplicationBodySchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    status: applicationStatusSchema.optional(),
+    launchUrl: z.string().url().nullable().optional(),
+    logoutNotificationUrl: z.string().url().optional(),
+    redirectUri: z.string().url().optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0);
 
 const addApplicationPolicyBodySchema = z.object({
   groupId: z.string().min(1),
@@ -114,6 +131,17 @@ export function createAdminRoutes(adminService: AdminService) {
     }
   });
 
+  router.patch("/admin/groups/:id", async (req, res, next) => {
+    try {
+      const parsed = updateGroupBodySchema.safeParse(req.body);
+      if (!parsed.success) throw invalidRequest("Data update group tidak valid");
+      const group = await adminService.updateGroup(req.params.id, parsed.data);
+      res.json({ group });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.post("/admin/groups/:id/users", async (req, res, next) => {
     try {
       const parsed = addUserToGroupBodySchema.safeParse(req.body);
@@ -175,6 +203,22 @@ export function createAdminRoutes(adminService: AdminService) {
 
       const application = await adminService.createApplication(parsed.data);
       res.status(201).json({ application });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.patch("/admin/applications/:id", async (req, res, next) => {
+    try {
+      const parsed = updateApplicationBodySchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw invalidRequest("Data update aplikasi tidak valid");
+      }
+      const application = await adminService.updateApplication(
+        req.params.id,
+        parsed.data,
+      );
+      res.json({ application });
     } catch (error) {
       next(error);
     }

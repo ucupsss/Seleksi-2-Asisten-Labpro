@@ -1,7 +1,7 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import { loadAuthConfig } from "./config.js";
+import { loadAuthConfig, type AuthConfig } from "./config.js";
 import { authDb } from "./db.js";
 import {
   errorHandler,
@@ -38,13 +38,14 @@ import {
 } from "./services/policy.service.js";
 
 export interface CreateAuthAppOptions {
+  config?: AuthConfig;
   authService?: AuthService;
   oauthService?: OauthService;
   adminService?: AdminService;
 }
 
 export function createAuthApp(options: CreateAuthAppOptions = {}) {
-  const config = loadAuthConfig();
+  const config = options.config ?? loadAuthConfig();
   const eventService = createEventService({
     repository: createPrismaEventRepository(authDb),
   });

@@ -5,6 +5,7 @@ import type { AuthService } from "../services/auth.service.js";
 import type { SsoSessionContext } from "../services/auth.service.js";
 import type { AdminService } from "../services/admin.service.js";
 import type { OauthService } from "../services/oauth.service.js";
+import { testAuthConfig } from "./test-config.js";
 
 function createFakeAuthService(
   currentSession: SsoSessionContext | null = {
@@ -78,6 +79,11 @@ function createFakeAdminService(): AdminService {
       name: input.name,
       description: input.description ?? null,
     }),
+    updateGroup: async (id, input) => ({
+      id,
+      name: input.name ?? "app-a-users",
+      description: input.description ?? null,
+    }),
     addUserToGroup: async () => {},
     removeUserFromGroup: async () => {},
     listMemberships: async () => [
@@ -102,6 +108,18 @@ function createFakeAdminService(): AdminService {
       launchUrl: input.launchUrl ?? null,
       logoutNotificationUrl: input.logoutNotificationUrl,
       redirectUris: [input.redirectUri],
+    }),
+    updateApplication: async (id, input) => ({
+      id,
+      name: input.name ?? "App A",
+      clientId: "app-a-client",
+      status: input.status ?? "active",
+      launchUrl: input.launchUrl ?? null,
+      logoutNotificationUrl:
+        input.logoutNotificationUrl ?? "http://localhost:4101/internal/logout",
+      redirectUris: [
+        input.redirectUri ?? "http://localhost:4101/auth/callback",
+      ],
     }),
     addApplicationPolicy: async () => {},
     removeApplicationPolicy: async () => {},
@@ -129,6 +147,7 @@ function createFakeAdminService(): AdminService {
 
 function createApp(authService = createFakeAuthService()) {
   return createAuthApp({
+    config: testAuthConfig,
     authService,
     oauthService: createFakeOauthService(),
     adminService: createFakeAdminService(),
@@ -232,6 +251,22 @@ describe("admin routes", () => {
 
     expect(response.status).toBe(201);
     expect(response.body).toEqual({ policy: { effect: "allow" } });
+  });
+
+  it("updates groups and application status through the control panel", async () => {
+    const [group, application] = await Promise.all([
+      request(createApp())
+        .patch("/admin/groups/group-1")
+        .send({ name: "renamed-group" }),
+      request(createApp())
+        .patch("/admin/applications/app-1")
+        .send({ status: "inactive" }),
+    ]);
+
+    expect(group.status).toBe(200);
+    expect(group.body.group.name).toBe("renamed-group");
+    expect(application.status).toBe(200);
+    expect(application.body.application.status).toBe("inactive");
   });
 
   it("removes memberships and policies through the control panel", async () => {

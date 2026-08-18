@@ -34,6 +34,9 @@ export interface ActiveSsoSessionRecord {
 }
 
 export interface AuthRepository {
+  withTransaction<T>(
+    work: (repository: AuthRepository) => Promise<T>,
+  ): Promise<T>;
   findUserByEmail(email: string): Promise<AuthUserRecord | null>;
   createSsoSession(input: {
     userId: string;
@@ -166,20 +169,23 @@ export function createAuthService(deps: AuthServiceDependencies): AuthService {
       }
 
       const sessionToken = generateToken();
-      const session = await deps.repository.createSsoSession({
-        userId: user.id,
-        sessionTokenHash: sha256Hex(sessionToken),
-        expiresAt: addMinutes(now(), deps.sessionTtlMinutes),
-        ipAddress: input.ipAddress,
-        userAgent: input.userAgent,
-      });
+      const session = await deps.repository.withTransaction(async (repository) => {
+        const createdSession = await repository.createSsoSession({
+          userId: user.id,
+          sessionTokenHash: sha256Hex(sessionToken),
+          expiresAt: addMinutes(now(), deps.sessionTtlMinutes),
+          ipAddress: input.ipAddress,
+          userAgent: input.userAgent,
+        });
 
-      await deps.repository.createAuditLog({
-        eventType: "login_success",
-        result: "success",
-        userId: user.id,
-        sessionId: session.id,
-        ipAddress: input.ipAddress,
+        await repository.createAuditLog({
+          eventType: "login_success",
+          result: "success",
+          userId: user.id,
+          sessionId: createdSession.id,
+          ipAddress: input.ipAddress,
+        });
+        return createdSession;
       });
 
       return {
@@ -262,8 +268,16 @@ export function createAuthService(deps: AuthServiceDependencies): AuthService {
   };
 }
 
-export function createPrismaAuthRepository(prisma: PrismaClient): AuthRepository {
-  return {
+export function createPrismaAuthRepository(
+  prisma: PrismaClient | Prisma.TransactionClient,
+): AuthRepository {
+  const repository: AuthRepository = {
+    async withTransaction(work) {
+      if (!("$transaction" in prisma)) return work(repository);
+      return prisma.$transaction((transaction) =>
+        work(createPrismaAuthRepository(transaction)),
+      );
+    },
     async findUserByEmail(email) {
       return prisma.user.findUnique({ where: { email } });
     },
@@ -330,4 +344,5 @@ export function createPrismaAuthRepository(prisma: PrismaClient): AuthRepository
       });
     },
   };
+  return repository;
 }

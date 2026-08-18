@@ -95,11 +95,16 @@ export interface AdminRepository {
     revokedAt: Date,
   ): Promise<string[]>;
   listGroups(): Promise<GroupSummary[]>;
+  findGroupById(id: string): Promise<GroupSummary | null>;
   findGroupByName(name: string): Promise<GroupSummary | null>;
   createGroup(input: {
     name: string;
     description?: string | null;
   }): Promise<GroupSummary>;
+  updateGroup(
+    id: string,
+    input: { name?: string; description?: string | null },
+  ): Promise<GroupSummary | null>;
   addUserToGroup(userId: string, groupId: string): Promise<void>;
   removeUserFromGroup(userId: string, groupId: string): Promise<void>;
   listMemberships(): Promise<MembershipSummary[]>;
@@ -107,6 +112,7 @@ export interface AdminRepository {
     userId: string,
   ): Promise<ApplicationSummary[]>;
   listApplications(): Promise<ApplicationSummary[]>;
+  findApplicationById(id: string): Promise<ApplicationSummary | null>;
   findApplicationByClientId(
     clientId: string,
   ): Promise<ApplicationSummary | null>;
@@ -118,6 +124,16 @@ export interface AdminRepository {
     logoutNotificationUrl: string;
     redirectUri: string;
   }): Promise<ApplicationSummary>;
+  updateApplication(
+    id: string,
+    input: {
+      name?: string;
+      status?: AdminApplicationStatus;
+      launchUrl?: string | null;
+      logoutNotificationUrl?: string;
+      redirectUri?: string;
+    },
+  ): Promise<ApplicationSummary | null>;
   addApplicationPolicy(applicationId: string, groupId: string): Promise<void>;
   removeApplicationPolicy(
     applicationId: string,
@@ -172,6 +188,11 @@ export interface CreateGroupInput {
   description?: string | null;
 }
 
+export interface UpdateGroupInput {
+  name?: string;
+  description?: string | null;
+}
+
 export interface CreateApplicationInput {
   name: string;
   clientId: string;
@@ -181,17 +202,30 @@ export interface CreateApplicationInput {
   redirectUri: string;
 }
 
+export interface UpdateApplicationInput {
+  name?: string;
+  status?: AdminApplicationStatus;
+  launchUrl?: string | null;
+  logoutNotificationUrl?: string;
+  redirectUri?: string;
+}
+
 export interface AdminService {
   listUsers(): Promise<UserSummary[]>;
   createUser(input: CreateUserInput): Promise<UserSummary>;
   updateUser(id: string, input: UpdateUserInput): Promise<UserSummary>;
   listGroups(): Promise<GroupSummary[]>;
   createGroup(input: CreateGroupInput): Promise<GroupSummary>;
+  updateGroup(id: string, input: UpdateGroupInput): Promise<GroupSummary>;
   addUserToGroup(input: { userId: string; groupId: string }): Promise<void>;
   removeUserFromGroup(input: { userId: string; groupId: string }): Promise<void>;
   listMemberships(): Promise<MembershipSummary[]>;
   listApplications(): Promise<ApplicationSummary[]>;
   createApplication(input: CreateApplicationInput): Promise<ApplicationSummary>;
+  updateApplication(
+    id: string,
+    input: UpdateApplicationInput,
+  ): Promise<ApplicationSummary>;
   addApplicationPolicy(input: {
     applicationId: string;
     groupId: string;
@@ -278,8 +312,11 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
     input: {
       userId: string;
       applicationId: string;
-      groupId: string;
-      reason: "group_membership_removed" | "application_policy_removed";
+      groupId?: string;
+      reason:
+        | "group_membership_removed"
+        | "application_policy_removed"
+        | "application_deactivated";
       occurredAt: Date;
     },
   ) {
@@ -297,7 +334,7 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
       reason: input.reason,
       occurredAt: input.occurredAt.toISOString(),
       metadata: {
-        groupId: input.groupId,
+        ...(input.groupId ? { groupId: input.groupId } : {}),
         applicationId: input.applicationId,
       },
     };
@@ -342,6 +379,10 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
         if (!existingUser) {
           throw notFoundError();
         }
+        if (input.email && input.email !== existingUser.email) {
+          const duplicateUser = await repository.findUserByEmail(input.email);
+          if (duplicateUser) throw duplicate("Email user sudah digunakan");
+        }
         const deactivating =
           existingUser.status === "active" && input.status === "inactive";
         const reconcilingInactive = input.status === "inactive";
@@ -380,6 +421,11 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
               },
               applicationIds,
             );
+            await repository.createAuditLog({
+              eventType: "password_changed",
+              result: "success",
+              userId: user.id,
+            });
           }
 
           if (reconcilingInactive) {
@@ -430,6 +476,25 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
         metadata: { groupId: group.id },
       });
       return group;
+    },
+
+    async updateGroup(id, input) {
+      return deps.repository.withTransaction(async (repository) => {
+        const existing = await repository.findGroupById(id);
+        if (!existing) throw notFoundError();
+        if (input.name && input.name !== existing.name) {
+          const duplicateGroup = await repository.findGroupByName(input.name);
+          if (duplicateGroup) throw duplicate("Nama group sudah digunakan");
+        }
+        const group = await repository.updateGroup(id, input);
+        if (!group) throw notFoundError();
+        await repository.createAuditLog({
+          eventType: "admin_group_updated",
+          result: "success",
+          metadata: { groupId: group.id },
+        });
+        return group;
+      });
     },
 
     async addUserToGroup(input) {
@@ -505,6 +570,44 @@ export function createAdminService(deps: AdminServiceDependencies): AdminService
         applicationId: application.id,
       });
       return application;
+    },
+
+    async updateApplication(id, input) {
+      return withSerializableRetry(async (repository) => {
+        const existing = await repository.findApplicationById(id);
+        if (!existing) throw notFoundError();
+        const affectedUserIds =
+          existing.status === "active" && input.status === "inactive"
+            ? await repository.listUsersWithAccessToApplication(id)
+            : [];
+        const application = await repository.updateApplication(id, input);
+        if (!application) throw notFoundError();
+
+        if (affectedUserIds.length > 0) {
+          const occurredAt = now();
+          for (const userId of affectedUserIds) {
+            await repository.revokeActiveSessionsForUser(
+              userId,
+              "access_policy_changed",
+              occurredAt,
+            );
+            await createAccessPolicyChangedEvent(repository, {
+              userId,
+              applicationId: id,
+              reason: "application_deactivated",
+              occurredAt,
+            });
+          }
+        }
+
+        await repository.createAuditLog({
+          eventType: "admin_application_updated",
+          result: "success",
+          applicationId: application.id,
+          metadata: { status: application.status },
+        });
+        return application;
+      });
     },
 
     async addApplicationPolicy(input) {
@@ -688,6 +791,10 @@ export function createPrismaAdminRepository(
       });
     },
 
+    async findGroupById(id) {
+      return prisma.group.findUnique({ where: { id } });
+    },
+
     async findGroupByName(name) {
       return prisma.group.findUnique({ where: { name } });
     },
@@ -699,6 +806,22 @@ export function createPrismaAdminRepository(
           description: input.description,
         },
       });
+    },
+
+    async updateGroup(id, input) {
+      try {
+        return await prisma.group.update({ where: { id }, data: input });
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "P2025"
+        ) {
+          return null;
+        }
+        throw error;
+      }
     },
 
     async addUserToGroup(userId, groupId) {
@@ -757,6 +880,14 @@ export function createPrismaAdminRepository(
       return applications.map(toApplicationSummary);
     },
 
+    async findApplicationById(id) {
+      const application = await prisma.application.findUnique({
+        where: { id },
+        include: { redirectUris: true },
+      });
+      return application ? toApplicationSummary(application) : null;
+    },
+
     async findApplicationByClientId(clientId) {
       const application = await prisma.application.findUnique({
         where: { clientId },
@@ -782,6 +913,38 @@ export function createPrismaAdminRepository(
         include: { redirectUris: true },
       });
       return toApplicationSummary(application);
+    },
+
+    async updateApplication(id, input) {
+      try {
+        const application = await prisma.application.update({
+          where: { id },
+          data: {
+            name: input.name,
+            status: input.status,
+            launchUrl: input.launchUrl,
+            logoutNotificationUrl: input.logoutNotificationUrl,
+            redirectUris: input.redirectUri
+              ? {
+                  deleteMany: {},
+                  create: { redirectUri: input.redirectUri },
+                }
+              : undefined,
+          },
+          include: { redirectUris: true },
+        });
+        return toApplicationSummary(application);
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "P2025"
+        ) {
+          return null;
+        }
+        throw error;
+      }
     },
 
     async addApplicationPolicy(applicationId, groupId) {
