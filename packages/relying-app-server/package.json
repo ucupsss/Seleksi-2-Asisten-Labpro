@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "npm run build -w @sso/shared && tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run --exclude dist/**"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -29,6 +29,6 @@
     "@types/supertest": "^6.0.3",
     "supertest": "^7.1.4",
     "tsx": "^4.23.5",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.10"
   }
 }

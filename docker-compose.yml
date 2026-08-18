@@ -2,15 +2,15 @@ services:
   auth-db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: sso
-      POSTGRES_PASSWORD: sso
-      POSTGRES_DB: sso_auth
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${AUTH_DATABASE_NAME:-sso_auth}
     ports:
       - "15432:5432"
     volumes:
       - auth-db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sso -d sso_auth"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -18,21 +18,24 @@ services:
   local-db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: sso
-      POSTGRES_PASSWORD: sso
-      POSTGRES_DB: sso_local
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${LOCAL_DATABASE_NAME:-sso_local}
     ports:
       - "15433:5432"
     volumes:
       - local-db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sso -d sso_local"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 20
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -51,14 +54,18 @@ services:
              npm run db:seed &&
              npm run dev -w @sso/auth-server"
     environment:
-      AUTH_DATABASE_URL: postgresql://sso:sso@auth-db:5432/sso_auth
-      LOCAL_DATABASE_URL: postgresql://sso:sso@local-db:5432/sso_local
+      AUTH_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@auth-db:5432/${AUTH_DATABASE_NAME:-sso_auth}
+      LOCAL_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@local-db:5432/${LOCAL_DATABASE_NAME:-sso_local}
       AUTH_SERVER_PORT: 4001
       AUTH_WEB_URL: http://localhost:4000
       AUTH_WEB_ORIGINS: http://localhost:4000,http://localhost:4100,http://localhost:4200
-      COOKIE_SECRET: ${COOKIE_SECRET:-dev-cookie-secret}
-      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      COOKIE_SECRET: ${COOKIE_SECRET:?Set COOKIE_SECRET in .env}
+      SEED_DEFAULT_PASSWORD: ${SEED_DEFAULT_PASSWORD:?Set SEED_DEFAULT_PASSWORD in .env}
+      SSO_SESSION_TTL_MINUTES: ${SSO_SESSION_TTL_MINUTES:-60}
+      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:?Set INTERNAL_LOGOUT_SECRET in .env}
+      LOCAL_SESSION_TTL_MINUTES: ${LOCAL_SESSION_TTL_MINUTES:-60}
+      PENDING_LOGIN_TTL_MINUTES: ${PENDING_LOGIN_TTL_MINUTES:-5}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
       APP_A_LOGOUT_NOTIFICATION_URL: http://app-a-server:4101/internal/logout
       APP_B_LOGOUT_NOTIFICATION_URL: http://app-b-server:4201/internal/logout
     ports:
@@ -101,14 +108,16 @@ services:
       dockerfile: docker/node.Dockerfile
     command: npm run dev -w @sso/app-a-server
     environment:
-      LOCAL_DATABASE_URL: postgresql://sso:sso@local-db:5432/sso_local
+      LOCAL_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@local-db:5432/${LOCAL_DATABASE_NAME:-sso_local}
       APP_A_SERVER_PORT: 4101
       AUTH_BASE_URL: http://auth-server:4001
       AUTH_PUBLIC_BASE_URL: http://localhost:4001
       APP_A_WEB_HOME_URL: http://localhost:4100
       APP_A_REDIRECT_URI: http://localhost:4101/auth/callback
       APP_A_WEB_ORIGINS: http://localhost:4100
-      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
+      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:?Set INTERNAL_LOGOUT_SECRET in .env}
+      LOCAL_SESSION_TTL_MINUTES: ${LOCAL_SESSION_TTL_MINUTES:-60}
+      PENDING_LOGIN_TTL_MINUTES: ${PENDING_LOGIN_TTL_MINUTES:-5}
     ports:
       - "4101:4101"
     depends_on:
@@ -147,14 +156,14 @@ services:
       dockerfile: docker/node.Dockerfile
     command: npm run dev -w @sso/app-b-server
     environment:
-      LOCAL_DATABASE_URL: postgresql://sso:sso@local-db:5432/sso_local
+      LOCAL_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@local-db:5432/${LOCAL_DATABASE_NAME:-sso_local}
       APP_B_SERVER_PORT: 4201
       AUTH_BASE_URL: http://auth-server:4001
       AUTH_PUBLIC_BASE_URL: http://localhost:4001
       APP_B_WEB_HOME_URL: http://localhost:4200
       APP_B_REDIRECT_URI: http://localhost:4201/auth/callback
       APP_B_WEB_ORIGINS: http://localhost:4200
-      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
+      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:?Set INTERNAL_LOGOUT_SECRET in .env}
     ports:
       - "4201:4201"
     depends_on:
@@ -193,15 +202,15 @@ services:
       dockerfile: docker/node.Dockerfile
     command: npm run dev -w @sso/sync-worker
     environment:
-      AUTH_DATABASE_URL: postgresql://sso:sso@auth-db:5432/sso_auth
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
-      RABBITMQ_REVOCATION_QUEUE: sso.revocations
-      RABBITMQ_REVOCATION_RETRY_QUEUE: sso.revocations.retry
-      RABBITMQ_REVOCATION_DLQ: sso.revocations.dlq
-      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:-dev-internal-secret}
-      SSO_DELIVERY_MAX_ATTEMPTS: 3
-      SSO_DELIVERY_RETRY_DELAY_MS: 5000
-      SSO_OUTBOX_POLL_INTERVAL_MS: 1000
+      AUTH_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@auth-db:5432/${AUTH_DATABASE_NAME:-sso_auth}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672
+      RABBITMQ_REVOCATION_QUEUE: ${RABBITMQ_REVOCATION_QUEUE:-sso.revocations}
+      RABBITMQ_REVOCATION_RETRY_QUEUE: ${RABBITMQ_REVOCATION_RETRY_QUEUE:-sso.revocations.retry}
+      RABBITMQ_REVOCATION_DLQ: ${RABBITMQ_REVOCATION_DLQ:-sso.revocations.dlq}
+      INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:?Set INTERNAL_LOGOUT_SECRET in .env}
+      SSO_DELIVERY_MAX_ATTEMPTS: ${SSO_DELIVERY_MAX_ATTEMPTS:-3}
+      SSO_DELIVERY_RETRY_DELAY_MS: ${SSO_DELIVERY_RETRY_DELAY_MS:-5000}
+      SSO_OUTBOX_POLL_INTERVAL_MS: ${SSO_OUTBOX_POLL_INTERVAL_MS:-1000}
     restart: unless-stopped
     depends_on:
       auth-server:

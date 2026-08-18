@@ -6,23 +6,23 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 4000",
     "build": "npm run build -w @sso/ui && tsc -p tsconfig.json && vite build",
-    "test": "vitest run"
+    "test": "vitest run --exclude dist/**"
   },
   "dependencies": {
     "@sso/ui": "0.0.0",
-    "@vitejs/plugin-react": "^4.3.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "vite": "^5.4.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.1.4",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.5.0",
-    "vitest": "^2.1.9"
+    "vite": "^6.4.3",
+    "vitest": "^4.1.10"
   }
 }

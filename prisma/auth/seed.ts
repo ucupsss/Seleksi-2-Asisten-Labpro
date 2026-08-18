@@ -3,7 +3,10 @@ import { PrismaClient } from "../../node_modules/.prisma/auth-client/index.js";
 
 const prisma = new PrismaClient();
 
-const password = "password123";
+const password = process.env.SEED_DEFAULT_PASSWORD;
+if (!password || password.length < 8) {
+  throw new Error("SEED_DEFAULT_PASSWORD must contain at least 8 characters");
+}
 const saltRounds = 12;
 
 async function upsertUser(input: {

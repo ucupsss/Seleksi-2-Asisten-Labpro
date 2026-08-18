@@ -4,6 +4,10 @@ WORKDIR /app
 
 ENV NODE_ENV=development
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates openssl \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages ./packages
 COPY auth-provider ./auth-provider

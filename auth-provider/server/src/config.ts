@@ -3,12 +3,10 @@ import { z } from "zod";
 
 const authConfigSchema = z.object({
   AUTH_SERVER_PORT: z.coerce.number().int().positive().default(4001),
-  AUTH_DATABASE_URL: z
-    .string()
-    .default("postgresql://sso:sso@localhost:5432/sso_auth"),
+  AUTH_DATABASE_URL: z.string().min(1),
   AUTH_WEB_URL: z.string().url().default("http://localhost:4000"),
   AUTH_WEB_ORIGINS: z.string().default("http://localhost:4000"),
-  COOKIE_SECRET: z.string().min(1).default("dev-cookie-secret"),
+  COOKIE_SECRET: z.string().min(16),
   SSO_SESSION_TTL_MINUTES: z.coerce.number().int().positive().default(60),
 });
 

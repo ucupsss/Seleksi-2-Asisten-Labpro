@@ -11,33 +11,41 @@ function listFromEnv(value: string | undefined, fallback: string[]) {
     : fallback;
 }
 
-export function loadAppAConfig(): RelyingAppConfig & { port: number } {
+function requiredEnv(env: NodeJS.ProcessEnv, name: string) {
+  const value = env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+export function loadAppAConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): RelyingAppConfig & { port: number } {
   return {
     appKey: "app-a",
     appName: "App A",
-    port: numberFromEnv(process.env.APP_A_SERVER_PORT, 4101),
-    authBaseUrl: process.env.AUTH_BASE_URL ?? "http://localhost:4001",
+    port: numberFromEnv(env.APP_A_SERVER_PORT, 4101),
+    authBaseUrl: env.AUTH_BASE_URL ?? "http://localhost:4001",
     authPublicBaseUrl:
-      process.env.AUTH_PUBLIC_BASE_URL ??
-      process.env.AUTH_BASE_URL ??
+      env.AUTH_PUBLIC_BASE_URL ??
+      env.AUTH_BASE_URL ??
       "http://localhost:4001",
-    webHomeUrl: process.env.APP_A_WEB_HOME_URL ?? "http://localhost:4100",
-    clientId: process.env.APP_A_CLIENT_ID ?? "app-a-client",
+    webHomeUrl: env.APP_A_WEB_HOME_URL ?? "http://localhost:4100",
+    clientId: env.APP_A_CLIENT_ID ?? "app-a-client",
     redirectUri:
-      process.env.APP_A_REDIRECT_URI ??
+      env.APP_A_REDIRECT_URI ??
       "http://localhost:4101/auth/callback",
     localSessionCookieName:
-      process.env.APP_A_SESSION_COOKIE_NAME ?? "app_a_session",
-    internalSecret: process.env.INTERNAL_LOGOUT_SECRET ?? "dev-internal-secret",
+      env.APP_A_SESSION_COOKIE_NAME ?? "app_a_session",
+    internalSecret: requiredEnv(env, "INTERNAL_LOGOUT_SECRET"),
     localSessionTtlMinutes: numberFromEnv(
-      process.env.LOCAL_SESSION_TTL_MINUTES,
+      env.LOCAL_SESSION_TTL_MINUTES,
       60,
     ),
     pendingLoginTtlMinutes: numberFromEnv(
-      process.env.PENDING_LOGIN_TTL_MINUTES,
+      env.PENDING_LOGIN_TTL_MINUTES,
       5,
     ),
-    allowedWebOrigins: listFromEnv(process.env.APP_A_WEB_ORIGINS, [
+    allowedWebOrigins: listFromEnv(env.APP_A_WEB_ORIGINS, [
       "http://localhost:4100",
     ]),
   };

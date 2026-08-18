@@ -3,7 +3,7 @@ import { loadAppBConfig } from "../config.js";
 
 describe("app b config", () => {
   it("uses App B SSO identity and callback defaults", () => {
-    const config = loadAppBConfig();
+    const config = loadAppBConfig({ INTERNAL_LOGOUT_SECRET: "internal-secret" });
 
     expect(config.appKey).toBe("app-b");
     expect(config.clientId).toBe("app-b-client");

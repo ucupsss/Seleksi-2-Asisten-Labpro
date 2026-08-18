@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "npm run build -w @sso/relying-app-server && tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run --exclude dist/**"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -15,6 +15,6 @@
   },
   "devDependencies": {
     "tsx": "^4.23.5",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.10"
   }
 }
