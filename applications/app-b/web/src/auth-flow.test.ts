@@ -17,4 +17,9 @@ describe("App B auth flow", () => {
   it("restores the signed-out screen after the page is refreshed", () => {
     expect(nextAuthPhase("checking", "anonymous", true)).toBe("signed-out");
   });
+
+  it("shows revoked and expired session state before starting a new login", () => {
+    expect(nextAuthPhase("checking", "revoked")).toBe("signed-out");
+    expect(nextAuthPhase("checking", "expired")).toBe("signed-out");
+  });
 });

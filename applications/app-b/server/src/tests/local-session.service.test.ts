@@ -11,6 +11,7 @@ function createRepository() {
   const profiles = new Map<string, { name: string; email: string; groups: string[] }>();
 
   const repository: LocalSessionRepository = {
+    withTransaction: async (work) => work(repository),
     createLocalSession: async (input) => {
       const session = {
         id: `session-${sessions.size + 1}`,
@@ -25,6 +26,16 @@ function createRepository() {
       };
       sessions.set(session.sessionTokenHash, session);
       return session;
+    },
+    findSessionByHash: async (input) => {
+      const session = sessions.get(input.sessionTokenHash);
+      return session?.appKey === input.appKey ? session : null;
+    },
+    markSessionExpired: async (input) => {
+      const session = sessions.get(input.sessionTokenHash);
+      if (session?.appKey === input.appKey && session.status === "active") {
+        session.status = "expired";
+      }
     },
     findActiveSessionByHash: async (input) => {
       const session = sessions.get(input.sessionTokenHash);
@@ -54,9 +65,13 @@ function createRepository() {
       processedEvents.has(`${input.appKey}:${input.eventId}`)
         ? { appKey: input.appKey, eventId: input.eventId }
         : null,
-    insertProcessedEvent: async (input) => {
-      processedEvents.add(`${input.appKey}:${input.eventId}`);
+    tryInsertProcessedEvent: async (input) => {
+      const key = `${input.appKey}:${input.eventId}`;
+      if (processedEvents.has(key)) return false;
+      processedEvents.add(key);
+      return true;
     },
+    updateProcessedEventResult: async () => {},
     listProcessedEvents: async () => [],
     revokeSessionsForLogoutEvent: async (input) => {
       let count = 0;

@@ -33,12 +33,41 @@ function toProfileRecord(profile: {
 }
 
 export function createPrismaLocalSessionRepository(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
 ): LocalSessionRepository {
-  return {
+  const repository: LocalSessionRepository = {
+    async withTransaction(work) {
+      if (!("$transaction" in prisma)) {
+        return work(repository);
+      }
+      return prisma.$transaction((transaction) =>
+        work(createPrismaLocalSessionRepository(transaction)),
+      );
+    },
     async createLocalSession(input) {
       return prisma.localSession.create({
         data: input,
+      });
+    },
+
+    async findSessionByHash(input) {
+      return prisma.localSession.findFirst({
+        where: {
+          appKey: input.appKey,
+          sessionTokenHash: input.sessionTokenHash,
+        },
+      });
+    },
+
+    async markSessionExpired(input) {
+      await prisma.localSession.updateMany({
+        where: {
+          appKey: input.appKey,
+          sessionTokenHash: input.sessionTokenHash,
+          status: "active",
+          revokedAt: null,
+        },
+        data: { status: "expired" },
       });
     },
 
@@ -167,9 +196,24 @@ export function createPrismaLocalSessionRepository(
       return event;
     },
 
-    async insertProcessedEvent(input) {
-      await prisma.processedEvent.create({
-        data: input,
+    async tryInsertProcessedEvent(input) {
+      const inserted = await prisma.$executeRaw`
+        INSERT INTO "ProcessedEvent" ("appKey", "eventId", "eventType", "result")
+        VALUES (${input.appKey}, ${input.eventId}, ${input.eventType}, ${input.result})
+        ON CONFLICT ("appKey", "eventId") DO NOTHING
+      `;
+      return inserted === 1;
+    },
+
+    async updateProcessedEventResult(input) {
+      await prisma.processedEvent.update({
+        where: {
+          appKey_eventId: {
+            appKey: input.appKey,
+            eventId: input.eventId,
+          },
+        },
+        data: { result: input.result },
       });
     },
 
@@ -207,4 +251,6 @@ export function createPrismaLocalSessionRepository(
       return result.count;
     },
   };
+
+  return repository;
 }

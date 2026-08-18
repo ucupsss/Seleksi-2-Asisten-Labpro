@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { buildAuthorizeUrl, createStandardError, randomToken } from "@sso/shared";
 import cookieParser from "cookie-parser";
 import cors from "cors";
@@ -22,6 +22,16 @@ const operationalDataQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+function internalSecretsMatch(provided: string | undefined, expected: string) {
+  if (!provided) {
+    return false;
+  }
+
+  const providedDigest = createHash("sha256").update(provided).digest();
+  const expectedDigest = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(providedDigest, expectedDigest);
+}
+
 const internalLogoutBodySchema = z
   .object({
     eventId: z.string().min(1),
@@ -33,7 +43,6 @@ const internalLogoutBodySchema = z
     userId: z.string().min(1),
     centralSessionId: z.string().min(1).nullable(),
     applicationId: z.string().min(1).nullable().optional(),
-    appKey: z.string().min(1).nullable().optional(),
     reason: z.string().min(1),
   })
   .superRefine((event, context) => {
@@ -135,6 +144,8 @@ export function createAppServer(
     deps.generatePkceVerifier ?? (() => randomToken(32));
   const pendingCookieMaxAgeMs = config.pendingLoginTtlMinutes * 60 * 1000;
   const localSessionCookieMaxAgeMs = config.localSessionTtlMinutes * 60 * 1000;
+  const oauthStateCookieName = `${config.appKey}_oauth_state`;
+  const pkceVerifierCookieName = `${config.appKey}_pkce_verifier`;
   const app = express();
 
   app.use(cors({ origin: config.allowedWebOrigins, credentials: true }));
@@ -175,9 +186,13 @@ export function createAppServer(
         metadata: { clientId: config.clientId },
       });
 
-      res.cookie("oauth_state", state, cookieOptions(pendingCookieMaxAgeMs));
       res.cookie(
-        "pkce_verifier",
+        oauthStateCookieName,
+        state,
+        cookieOptions(pendingCookieMaxAgeMs),
+      );
+      res.cookie(
+        pkceVerifierCookieName,
         codeVerifier,
         cookieOptions(pendingCookieMaxAgeMs),
       );
@@ -196,9 +211,9 @@ export function createAppServer(
       }
 
       if (
-        !req.cookies.oauth_state ||
-        !req.cookies.pkce_verifier ||
-        req.cookies.oauth_state !== parsed.data.state
+        !req.cookies[oauthStateCookieName] ||
+        !req.cookies[pkceVerifierCookieName] ||
+        req.cookies[oauthStateCookieName] !== parsed.data.state
       ) {
         throw new HttpError(400, "INVALID_REQUEST", "State SSO tidak valid");
       }
@@ -217,7 +232,7 @@ export function createAppServer(
         code: parsed.data.code,
         clientId: config.clientId,
         redirectUri: config.redirectUri,
-        codeVerifier: req.cookies.pkce_verifier,
+        codeVerifier: req.cookies[pkceVerifierCookieName],
       });
       await localSessionService.recordActivity({
         ...activityContext,
@@ -237,8 +252,8 @@ export function createAppServer(
           activityContext,
         );
 
-      clearCookie(res, "oauth_state");
-      clearCookie(res, "pkce_verifier");
+      clearCookie(res, oauthStateCookieName);
+      clearCookie(res, pkceVerifierCookieName);
       res.cookie(
         config.localSessionCookieName,
         localSession.sessionToken,
@@ -324,7 +339,12 @@ export function createAppServer(
 
   app.post("/internal/logout", async (req, res, next) => {
     try {
-      if (req.header("x-internal-secret") !== config.internalSecret) {
+      if (
+        !internalSecretsMatch(
+          req.header("x-internal-secret"),
+          config.internalSecret,
+        )
+      ) {
         throw new HttpError(401, "UNAUTHORIZED", "Internal secret tidak valid");
       }
 
@@ -339,7 +359,6 @@ export function createAppServer(
         eventType: parsed.data.eventType,
         externalUserId: parsed.data.userId,
         centralSessionId: parsed.data.centralSessionId,
-        appKey: parsed.data.appKey,
         reason: parsed.data.reason,
         requestId: getRequestId(res),
         correlationId: parsed.data.eventId,

@@ -41,6 +41,7 @@ function createRepository() {
   }> = [];
 
   const repository: LocalSessionRepository = {
+    withTransaction: async (work) => work(repository),
     createLocalSession: async (input) => {
       const session = {
         id: `session-${sessions.size + 1}`,
@@ -55,6 +56,16 @@ function createRepository() {
       };
       sessions.set(session.sessionTokenHash, session);
       return session;
+    },
+    findSessionByHash: async (input) => {
+      const session = sessions.get(input.sessionTokenHash);
+      return session?.appKey === input.appKey ? session : null;
+    },
+    markSessionExpired: async (input) => {
+      const session = sessions.get(input.sessionTokenHash);
+      if (session?.appKey === input.appKey && session.status === "active") {
+        session.status = "expired";
+      }
     },
     findActiveSessionByHash: async (input) => {
       const session = sessions.get(input.sessionTokenHash);
@@ -102,9 +113,13 @@ function createRepository() {
       processedEvents.has(`${input.appKey}:${input.eventId}`)
         ? { appKey: input.appKey, eventId: input.eventId }
         : null,
-    insertProcessedEvent: async (input) => {
-      processedEvents.add(`${input.appKey}:${input.eventId}`);
+    tryInsertProcessedEvent: async (input) => {
+      const key = `${input.appKey}:${input.eventId}`;
+      if (processedEvents.has(key)) return false;
+      processedEvents.add(key);
+      return true;
     },
+    updateProcessedEventResult: async () => {},
     listProcessedEvents: async (input) => [
       {
         appKey: input.appKey,
@@ -200,8 +215,8 @@ describe("relying app server", () => {
     );
     expect(response.body.redirectTo).toContain("client_id=app-a-client");
     expect(response.body.redirectTo).toContain("state=state-1");
-    expect(getCookie(response, "oauth_state")).toContain("HttpOnly");
-    expect(getCookie(response, "pkce_verifier")).toContain("HttpOnly");
+    expect(getCookie(response, "app-a_oauth_state")).toContain("HttpOnly");
+    expect(getCookie(response, "app-a_pkce_verifier")).toContain("HttpOnly");
   });
 
   it("handles callback by creating local session and redirecting home", async () => {
@@ -209,12 +224,17 @@ describe("relying app server", () => {
     const response = await request(app)
       .get("/auth/callback")
       .query({ code: "raw-code", state: "state-1" })
-      .set("Cookie", ["oauth_state=state-1", "pkce_verifier=verifier-1"]);
+      .set("Cookie", [
+        "app-a_oauth_state=state-1",
+        "app-a_pkce_verifier=verifier-1",
+      ]);
 
     expect(response.status).toBe(302);
     expect(response.headers.location).toBe("http://localhost:5173");
     expect(getCookie(response, "app_a_session")).toContain("HttpOnly");
-    expect(getCookie(response, "oauth_state")).toContain("Expires=Thu, 01 Jan 1970");
+    expect(getCookie(response, "app-a_oauth_state")).toContain(
+      "Expires=Thu, 01 Jan 1970",
+    );
   });
 
   it("returns authenticated session from local session cookie", async () => {
@@ -222,7 +242,10 @@ describe("relying app server", () => {
     const callback = await request(app)
       .get("/auth/callback")
       .query({ code: "raw-code", state: "state-1" })
-      .set("Cookie", ["oauth_state=state-1", "pkce_verifier=verifier-1"]);
+      .set("Cookie", [
+        "app-a_oauth_state=state-1",
+        "app-a_pkce_verifier=verifier-1",
+      ]);
     const sessionCookie = getCookie(callback, "app_a_session")?.split(";")[0];
 
     const response = await request(app)
@@ -243,7 +266,10 @@ describe("relying app server", () => {
     const callback = await request(app)
       .get("/auth/callback")
       .query({ code: "raw-code", state: "state-1" })
-      .set("Cookie", ["oauth_state=state-1", "pkce_verifier=verifier-1"]);
+      .set("Cookie", [
+        "app-a_oauth_state=state-1",
+        "app-a_pkce_verifier=verifier-1",
+      ]);
     const sessionCookie = getCookie(callback, "app_a_session")?.split(";")[0];
 
     const response = await request(app)
@@ -276,7 +302,10 @@ describe("relying app server", () => {
     const callback = await request(app)
       .get("/auth/callback")
       .query({ code: "raw-code", state: "state-1" })
-      .set("Cookie", ["oauth_state=state-1", "pkce_verifier=verifier-1"]);
+      .set("Cookie", [
+        "app-a_oauth_state=state-1",
+        "app-a_pkce_verifier=verifier-1",
+      ]);
     const sessionCookie = getCookie(callback, "app_a_session")?.split(";")[0];
 
     const response = await request(app)
@@ -309,7 +338,10 @@ describe("relying app server", () => {
     const callback = await request(app)
       .get("/auth/callback")
       .query({ code: "raw-code", state: "state-1" })
-      .set("Cookie", ["oauth_state=state-1", "pkce_verifier=verifier-1"]);
+      .set("Cookie", [
+        "app-a_oauth_state=state-1",
+        "app-a_pkce_verifier=verifier-1",
+      ]);
     const sessionCookie = getCookie(callback, "app_a_session")?.split(";")[0];
 
     const logout = await request(app)
@@ -323,7 +355,10 @@ describe("relying app server", () => {
     expect(getCookie(logout, "app_a_session")).toContain(
       "Expires=Thu, 01 Jan 1970",
     );
-    expect(session.body).toEqual({ status: "anonymous" });
+    expect(session.body).toMatchObject({
+      status: "revoked",
+      session: { status: "revoked" },
+    });
   });
 
   it("requires internal secret for internal logout", async () => {

@@ -51,6 +51,9 @@ export interface ProcessedEventRecord {
 }
 
 export interface LocalSessionRepository {
+  withTransaction<T>(
+    work: (repository: LocalSessionRepository) => Promise<T>,
+  ): Promise<T>;
   createLocalSession(input: {
     appKey: string;
     sessionTokenHash: string;
@@ -58,6 +61,14 @@ export interface LocalSessionRepository {
     centralSessionId: string;
     expiresAt: Date;
   }): Promise<LocalSessionRecord>;
+  findSessionByHash(input: {
+    appKey: string;
+    sessionTokenHash: string;
+  }): Promise<LocalSessionRecord | null>;
+  markSessionExpired(input: {
+    appKey: string;
+    sessionTokenHash: string;
+  }): Promise<void>;
   findActiveSessionByHash(input: {
     appKey: string;
     sessionTokenHash: string;
@@ -91,10 +102,15 @@ export interface LocalSessionRepository {
     appKey: string;
     eventId: string;
   }): Promise<{ appKey: string; eventId: string } | null>;
-  insertProcessedEvent(input: {
+  tryInsertProcessedEvent(input: {
     appKey: string;
     eventId: string;
     eventType: string;
+    result: string;
+  }): Promise<boolean>;
+  updateProcessedEventResult(input: {
+    appKey: string;
+    eventId: string;
     result: string;
   }): Promise<void>;
   listProcessedEvents(input: {
@@ -111,6 +127,14 @@ export interface LocalSessionRepository {
 
 export type LocalSessionView =
   | { status: "anonymous" }
+  | {
+      status: "expired" | "revoked";
+      session: {
+        status: "expired" | "revoked";
+        createdAt: Date;
+        expiresAt: Date;
+      };
+    }
   | {
       status: "authenticated";
       user: {
@@ -148,7 +172,6 @@ export interface LocalSessionService {
     externalUserId: string;
     centralSessionId: string | null;
     reason: string;
-    appKey?: string | null;
     requestId?: string;
     correlationId?: string;
   }): Promise<{ alreadyProcessed: boolean; revokedCount: number }>;
@@ -172,34 +195,36 @@ export function createLocalSessionService(
     async createSessionFromUserInfo(userInfo, context) {
       const currentTime = now();
       const sessionToken = generateToken();
+      const session = await deps.repository.withTransaction(async (repository) => {
+        await repository.upsertProfile({
+          appKey: deps.appKey,
+          externalUserId: userInfo.sub,
+          name: userInfo.name,
+          email: userInfo.email,
+          groups: userInfo.groups,
+          syncedAt: currentTime,
+        });
 
-      await deps.repository.upsertProfile({
-        appKey: deps.appKey,
-        externalUserId: userInfo.sub,
-        name: userInfo.name,
-        email: userInfo.email,
-        groups: userInfo.groups,
-        syncedAt: currentTime,
-      });
-
-      const session = await deps.repository.createLocalSession({
-        appKey: deps.appKey,
-        sessionTokenHash: sha256Hex(sessionToken),
-        externalUserId: userInfo.sub,
-        centralSessionId: userInfo.centralSessionId,
-        expiresAt: addMinutes(currentTime, deps.sessionTtlMinutes),
-      });
-
-      await deps.repository.createActivityLog({
-        appKey: deps.appKey,
-        eventType: "local_login_success",
-        message: "Local session created from SSO userinfo.",
-        requestId: context?.requestId,
-        correlationId: context?.correlationId,
-        metadata: {
+        const createdSession = await repository.createLocalSession({
+          appKey: deps.appKey,
+          sessionTokenHash: sha256Hex(sessionToken),
           externalUserId: userInfo.sub,
           centralSessionId: userInfo.centralSessionId,
-        },
+          expiresAt: addMinutes(currentTime, deps.sessionTtlMinutes),
+        });
+
+        await repository.createActivityLog({
+          appKey: deps.appKey,
+          eventType: "local_login_success",
+          message: "Local session created from SSO userinfo.",
+          requestId: context?.requestId,
+          correlationId: context?.correlationId,
+          metadata: {
+            externalUserId: userInfo.sub,
+            centralSessionId: userInfo.centralSessionId,
+          },
+        });
+        return createdSession;
       });
 
       return { sessionToken, session };
@@ -210,12 +235,53 @@ export function createLocalSessionService(
         return { status: "anonymous" };
       }
 
-      const session = await deps.repository.findActiveSessionByHash({
+      const sessionTokenHash = sha256Hex(sessionToken);
+      const storedSession = await deps.repository.findSessionByHash({
         appKey: deps.appKey,
-        sessionTokenHash: sha256Hex(sessionToken),
+        sessionTokenHash,
       });
 
-      if (!session || session.expiresAt.getTime() <= now().getTime()) {
+      if (!storedSession) return { status: "anonymous" };
+
+      const currentTime = now();
+      if (
+        storedSession.status === "expired" ||
+        (storedSession.status === "active" &&
+          storedSession.expiresAt.getTime() <= currentTime.getTime())
+      ) {
+        if (storedSession.status === "active") {
+          await deps.repository.markSessionExpired({
+            appKey: deps.appKey,
+            sessionTokenHash,
+          });
+        }
+        return {
+          status: "expired",
+          session: {
+            status: "expired",
+            createdAt: storedSession.createdAt,
+            expiresAt: storedSession.expiresAt,
+          },
+        };
+      }
+
+      if (storedSession.status === "revoked" || storedSession.revokedAt) {
+        return {
+          status: "revoked",
+          session: {
+            status: "revoked",
+            createdAt: storedSession.createdAt,
+            expiresAt: storedSession.expiresAt,
+          },
+        };
+      }
+
+      const session = await deps.repository.findActiveSessionByHash({
+        appKey: deps.appKey,
+        sessionTokenHash,
+      });
+
+      if (!session) {
         return { status: "anonymous" };
       }
 
@@ -239,25 +305,27 @@ export function createLocalSessionService(
         return;
       }
 
-      const session = await deps.repository.revokeSessionByHash({
-        appKey: deps.appKey,
-        sessionTokenHash: sha256Hex(sessionToken),
-        reason: "local_logout",
-      });
-
-      if (session) {
-        await deps.repository.createActivityLog({
+      await deps.repository.withTransaction(async (repository) => {
+        const session = await repository.revokeSessionByHash({
           appKey: deps.appKey,
-          eventType: "local_logout",
-          message: "Local session revoked by relying app logout.",
-          requestId: context?.requestId,
-          correlationId: context?.correlationId,
-          metadata: {
-            externalUserId: session.externalUserId,
-            centralSessionId: session.centralSessionId,
-          },
+          sessionTokenHash: sha256Hex(sessionToken),
+          reason: "local_logout",
         });
-      }
+
+        if (session) {
+          await repository.createActivityLog({
+            appKey: deps.appKey,
+            eventType: "local_logout",
+            message: "Local session revoked by relying app logout.",
+            requestId: context?.requestId,
+            correlationId: context?.correlationId,
+            metadata: {
+              externalUserId: session.externalUserId,
+              centralSessionId: session.centralSessionId,
+            },
+          });
+        }
+      });
     },
 
     async recordActivity(input) {
@@ -283,44 +351,49 @@ export function createLocalSessionService(
     },
 
     async processInternalLogout(input) {
-      const existing = await deps.repository.findProcessedEvent({
-        appKey: deps.appKey,
-        eventId: input.eventId,
-      });
-
-      if (existing) {
-        return { alreadyProcessed: true, revokedCount: 0 };
-      }
-
-      const revokedCount = await deps.repository.revokeSessionsForLogoutEvent({
-        appKey: input.appKey ?? deps.appKey,
-        centralSessionId: input.centralSessionId,
-        externalUserId: input.externalUserId,
-        reason: input.reason,
-      });
-
-      await deps.repository.insertProcessedEvent({
-        appKey: deps.appKey,
-        eventId: input.eventId,
-        eventType: input.eventType,
-        result: "success",
-      });
-
-      await deps.repository.createActivityLog({
-        appKey: deps.appKey,
-        eventType: "internal_logout_processed",
-        message: "Internal logout event processed.",
-        requestId: input.requestId,
-        correlationId: input.correlationId ?? input.eventId,
-        metadata: {
+      return deps.repository.withTransaction(async (repository) => {
+        const claimed = await repository.tryInsertProcessedEvent({
+          appKey: deps.appKey,
           eventId: input.eventId,
-          revokedCount,
+          eventType: input.eventType,
+          result: "processing",
+        });
+
+        if (!claimed) {
+          return { alreadyProcessed: true, revokedCount: 0 };
+        }
+
+        const revokedCount = await repository.revokeSessionsForLogoutEvent({
+          appKey: deps.appKey,
           centralSessionId: input.centralSessionId,
           externalUserId: input.externalUserId,
-        },
-      });
+          reason: input.reason,
+        });
+        const result = `revoked_local_sessions:${revokedCount}`;
 
-      return { alreadyProcessed: false, revokedCount };
+        await repository.updateProcessedEventResult({
+          appKey: deps.appKey,
+          eventId: input.eventId,
+          result,
+        });
+
+        await repository.createActivityLog({
+          appKey: deps.appKey,
+          eventType: "internal_logout_processed",
+          message: "Internal logout event processed.",
+          requestId: input.requestId,
+          correlationId: input.correlationId ?? input.eventId,
+          metadata: {
+            eventId: input.eventId,
+            result,
+            revokedCount,
+            centralSessionId: input.centralSessionId,
+            externalUserId: input.externalUserId,
+          },
+        });
+
+        return { alreadyProcessed: false, revokedCount };
+      });
     },
   };
 }

@@ -21,6 +21,14 @@ import { apiJson } from "./lib/api.js";
 type SessionResponse =
   | { status: "anonymous" }
   | {
+      status: "expired" | "revoked";
+      session: {
+        status: "expired" | "revoked";
+        createdAt: string;
+        expiresAt: string;
+      };
+    }
+  | {
       status: "authenticated";
       user: {
         name: string;
@@ -66,6 +74,10 @@ export function nextAuthPhase(
 ): AuthPhase {
   if (sessionStatus === "authenticated") {
     return "authenticated";
+  }
+
+  if (sessionStatus === "expired" || sessionStatus === "revoked") {
+    return "signed-out";
   }
 
   if (currentPhase === "signed-out" || signedOutWasStored) {
@@ -206,8 +218,19 @@ export function App() {
             {phase === "signed-out" ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  You have signed out of App B.
+                  {session.status === "expired"
+                    ? "Your App B session has expired."
+                    : session.status === "revoked"
+                      ? "Your App B session was revoked by the Auth Provider."
+                      : "You have signed out of App B."}
                 </p>
+                {session.status === "expired" || session.status === "revoked" ? (
+                  <div className="rounded-md border p-3 text-xs text-muted-foreground">
+                    <p>Status: {session.session.status}</p>
+                    <p>Created: {new Date(session.session.createdAt).toLocaleString()}</p>
+                    <p>Expires: {new Date(session.session.expiresAt).toLocaleString()}</p>
+                  </div>
+                ) : null}
                 <Button className="w-full" onClick={() => void startLogin()}>
                   <LogIn className="h-4 w-4" />
                   Sign in with SSO

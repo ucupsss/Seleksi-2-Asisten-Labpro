@@ -19,6 +19,26 @@ function createRepository(appKey = "app-a") {
   }> = [];
 
   const repository: LocalSessionRepository = {
+    withTransaction: async (work) => {
+      const sessionSnapshot = new Map(
+        [...sessions].map(([key, value]) => [key, { ...value }]),
+      );
+      const profileSnapshot = new Map(profiles);
+      const processedSnapshot = new Set(processedEvents);
+      const activityLength = activityLogs.length;
+      try {
+        return await work(repository);
+      } catch (error) {
+        sessions.clear();
+        sessionSnapshot.forEach((value, key) => sessions.set(key, value));
+        profiles.clear();
+        profileSnapshot.forEach((value, key) => profiles.set(key, value));
+        processedEvents.clear();
+        processedSnapshot.forEach((value) => processedEvents.add(value));
+        activityLogs.length = activityLength;
+        throw error;
+      }
+    },
     createLocalSession: async (input) => {
       const session = {
         id: `session-${sessions.size + 1}`,
@@ -33,6 +53,16 @@ function createRepository(appKey = "app-a") {
       };
       sessions.set(session.sessionTokenHash, session);
       return session;
+    },
+    findSessionByHash: async (input) => {
+      const session = sessions.get(input.sessionTokenHash);
+      return session?.appKey === input.appKey ? session : null;
+    },
+    markSessionExpired: async (input) => {
+      const session = sessions.get(input.sessionTokenHash);
+      if (session?.appKey === input.appKey && session.status === "active") {
+        session.status = "expired";
+      }
     },
     findActiveSessionByHash: async (input) => {
       const session = sessions.get(input.sessionTokenHash);
@@ -86,9 +116,13 @@ function createRepository(appKey = "app-a") {
       processedEvents.has(`${input.appKey}:${input.eventId}`)
         ? { eventId: input.eventId, appKey: input.appKey }
         : null,
-    insertProcessedEvent: async (input) => {
-      processedEvents.add(`${input.appKey}:${input.eventId}`);
+    tryInsertProcessedEvent: async (input) => {
+      const key = `${input.appKey}:${input.eventId}`;
+      if (processedEvents.has(key)) return false;
+      processedEvents.add(key);
+      return true;
     },
+    updateProcessedEventResult: async () => {},
     listProcessedEvents: async (input) =>
       [...processedEvents]
         .filter((key) => key.startsWith(`${input.appKey}:`))
@@ -132,7 +166,14 @@ function createRepository(appKey = "app-a") {
     sessionTtlMinutes: 60,
   });
 
-  return { service, sessions, profiles, processedEvents, activityLogs };
+  return {
+    service,
+    repository,
+    sessions,
+    profiles,
+    processedEvents,
+    activityLogs,
+  };
 }
 
 describe("local session service", () => {
@@ -271,6 +312,62 @@ describe("local session service", () => {
     expect(processedEvents).toEqual(new Set(["app-a:event-1"]));
   });
 
+  it("handles concurrent duplicate events as a successful replay", async () => {
+    const { service, processedEvents } = createRepository();
+    const event = {
+      eventId: "event-concurrent",
+      eventType: "SessionRevoked",
+      externalUserId: "user-1",
+      centralSessionId: "central-session-1",
+      reason: "sso_logout",
+    };
+
+    const results = await Promise.all([
+      service.processInternalLogout(event),
+      service.processInternalLogout(event),
+    ]);
+
+    expect(results.filter((result) => result.alreadyProcessed)).toHaveLength(1);
+    expect(processedEvents).toEqual(new Set(["app-a:event-concurrent"]));
+  });
+
+  it("rolls back local login if its activity audit cannot be written", async () => {
+    const { service, repository, sessions, profiles } = createRepository();
+    repository.createActivityLog = async () => {
+      throw new Error("audit failed");
+    };
+
+    await expect(
+      service.createSessionFromUserInfo({
+        sub: "user-1",
+        name: "Student User",
+        email: "student@example.com",
+        groups: ["app-a-users"],
+        centralSessionId: "central-session-1",
+      }),
+    ).rejects.toThrow("audit failed");
+    expect(sessions.size).toBe(0);
+    expect(profiles.size).toBe(0);
+  });
+
+  it("persists and reports an expired local session", async () => {
+    const { service, sessions } = createRepository();
+    await service.createSessionFromUserInfo({
+      sub: "user-1",
+      name: "Student User",
+      email: "student@example.com",
+      groups: ["app-a-users"],
+      centralSessionId: "central-session-1",
+    });
+    const storedSession = [...sessions.values()][0]!;
+    storedSession.expiresAt = new Date("2026-08-09T09:59:00.000Z");
+
+    const view = await service.getCurrentSession("raw-local-session-token");
+
+    expect(view).toMatchObject({ status: "expired", session: { status: "expired" } });
+    expect(storedSession.status).toBe("expired");
+  });
+
   it("revokes every user session when password changes", async () => {
     const { service, sessions } = createRepository();
     sessions.set("session-token-1", {
@@ -352,7 +449,6 @@ describe("local session service", () => {
       eventType: "AccessPolicyChanged",
       externalUserId: "user-1",
       centralSessionId: null,
-      appKey: "app-a",
       reason: "group_membership_removed",
     });
 
