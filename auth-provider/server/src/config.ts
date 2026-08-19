@@ -4,20 +4,28 @@ import { z } from "zod";
 const authConfigSchema = z.object({
   AUTH_SERVER_PORT: z.coerce.number().int().positive().default(4001),
   AUTH_DATABASE_URL: z.string().min(1),
+  RABBITMQ_URL: z.string().min(1),
   AUTH_WEB_URL: z.string().url().default("http://localhost:4000"),
   AUTH_WEB_ORIGINS: z.string().default("http://localhost:4000"),
   COOKIE_SECRET: z.string().min(16),
   SSO_SESSION_TTL_MINUTES: z.coerce.number().int().positive().default(60),
+  HEALTH_READINESS_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(2000),
 });
 
 export interface AuthConfig {
   port: number;
   authDatabaseUrl: string;
+  rabbitUrl: string;
   authWebUrl: string;
   allowedWebOrigins: string[];
   cookieName: "sso_session";
   cookieSecret: string;
   ssoSessionTtlMinutes: number;
+  healthReadinessTimeoutMs: number;
 }
 
 export function loadAuthConfig(
@@ -28,6 +36,7 @@ export function loadAuthConfig(
   return {
     port: parsed.AUTH_SERVER_PORT,
     authDatabaseUrl: parsed.AUTH_DATABASE_URL,
+    rabbitUrl: parsed.RABBITMQ_URL,
     authWebUrl: parsed.AUTH_WEB_URL,
     allowedWebOrigins: parsed.AUTH_WEB_ORIGINS.split(",")
       .map((origin) => origin.trim())
@@ -35,5 +44,6 @@ export function loadAuthConfig(
     cookieName: "sso_session",
     cookieSecret: parsed.COOKIE_SECRET,
     ssoSessionTtlMinutes: parsed.SSO_SESSION_TTL_MINUTES,
+    healthReadinessTimeoutMs: parsed.HEALTH_READINESS_TIMEOUT_MS,
   };
 }

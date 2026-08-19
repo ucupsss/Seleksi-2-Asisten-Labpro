@@ -23,7 +23,7 @@ outbox berbasis RabbitMQ untuk sinkronisasi pencabutan sesi.
 
 - [ ] B01 - MFA atau WebAuthn
 - [ ] B02 - Observability
-- [ ] B03 - Liveness dan Readiness Probe
+- [x] B03 - Liveness dan Readiness Probe
 - [ ] B04 - Graceful Shutdown
 
 ## Arsitektur
@@ -166,7 +166,8 @@ wajib tidak tersedia.
 
 | Komponen | Method dan path | Fungsi |
 | --- | --- | --- |
-| Auth | `GET /health` | Health check Auth Server |
+| Auth | `GET /health`, `GET /health/live` | Liveness Auth Server tanpa memeriksa dependency |
+| Auth | `GET /health/ready` | Readiness Primary DB dan RabbitMQ (`503` bila salah satu gagal) |
 | Auth | `POST /auth/login`, `POST /auth/logout` | Central login dan SSO logout |
 | OAuth | `GET /oauth/authorize` | Validasi client, redirect URI, session, dan policy; terbitkan code |
 | OAuth | `POST /oauth/token` | Tukar code sekali pakai menjadi opaque access token |
@@ -197,6 +198,23 @@ docker compose --env-file .env config --quiet
 Pengujian mencakup policy, code reuse/concurrency, rollback transaksi,
 PasswordChanged, deactivation, AccessPolicyChanged, idempotency per aplikasi,
 retry/DLQ, isolasi local logout, status expired/revoked, dan route authorization.
+
+## Bonus B03 - Liveness dan Readiness Probe
+
+- `GET /health/live` mengembalikan `200` selama proses Auth Server masih dapat
+  merespons dan tidak memeriksa dependency.
+- `GET /health/ready` menjalankan query ringan ke Primary DB dan membuka koneksi
+  AMQP ke RabbitMQ. Semua pemeriksaan berjalan paralel dengan batas waktu dari
+  `HEALTH_READINESS_TIMEOUT_MS`.
+- Readiness mengembalikan `503` dan status komponen `down` ketika dependency
+  gagal, tanpa membocorkan alamat internal, credential, atau pesan error mentah.
+- Endpoint `/health` lama tetap tersedia sebagai alias liveness untuk menjaga
+  kompatibilitas. Health check Docker menggunakan endpoint readiness.
+
+Untuk demonstrasi, bandingkan `/health/live` dan `/health/ready`, hentikan
+sementara `auth-db` atau `rabbitmq`, lalu nyalakan kembali. Liveness harus tetap
+`200`, readiness berubah menjadi `503`, dan kembali `200` tanpa me-restart Auth
+Server setelah dependency pulih.
 
 ## Screenshot
 

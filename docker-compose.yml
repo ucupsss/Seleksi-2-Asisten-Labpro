@@ -62,6 +62,7 @@ services:
       COOKIE_SECRET: ${COOKIE_SECRET:?Set COOKIE_SECRET in .env}
       SEED_DEFAULT_PASSWORD: ${SEED_DEFAULT_PASSWORD:?Set SEED_DEFAULT_PASSWORD in .env}
       SSO_SESSION_TTL_MINUTES: ${SSO_SESSION_TTL_MINUTES:-60}
+      HEALTH_READINESS_TIMEOUT_MS: ${HEALTH_READINESS_TIMEOUT_MS:-2000}
       INTERNAL_LOGOUT_SECRET: ${INTERNAL_LOGOUT_SECRET:?Set INTERNAL_LOGOUT_SECRET in .env}
       LOCAL_SESSION_TTL_MINUTES: ${LOCAL_SESSION_TTL_MINUTES:-60}
       PENDING_LOGIN_TTL_MINUTES: ${PENDING_LOGIN_TTL_MINUTES:-5}
@@ -83,7 +84,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+          "fetch('http://localhost:4001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
         ]
       interval: 10s
       timeout: 5s

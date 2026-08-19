@@ -11,7 +11,11 @@ import { requestIdMiddleware } from "./middleware/request-id.js";
 import { createRequireAdministrator } from "./middleware/require-administrator.js";
 import { createAdminRoutes } from "./routes/admin.routes.js";
 import { createAuthRoutes } from "./routes/auth.routes.js";
-import { healthRoutes } from "./routes/health.routes.js";
+import {
+  createDefaultReadinessChecks,
+  createHealthRoutes,
+  type ReadinessChecks,
+} from "./routes/health.routes.js";
 import { createOauthRoutes } from "./routes/oauth.routes.js";
 import {
   createAdminService,
@@ -42,6 +46,7 @@ export interface CreateAuthAppOptions {
   authService?: AuthService;
   oauthService?: OauthService;
   adminService?: AdminService;
+  readinessChecks?: ReadinessChecks;
 }
 
 export function createAuthApp(options: CreateAuthAppOptions = {}) {
@@ -84,7 +89,12 @@ export function createAuthApp(options: CreateAuthAppOptions = {}) {
   app.use(cookieParser(config.cookieSecret));
   app.use(requestIdMiddleware);
 
-  app.use(healthRoutes);
+  app.use(
+    createHealthRoutes(
+      options.readinessChecks ?? createDefaultReadinessChecks(config),
+      config.healthReadinessTimeoutMs,
+    ),
+  );
   app.use(createAuthRoutes(authService, config));
   app.use(createOauthRoutes(authService, oauthService, config));
   const requireAdministrator = createRequireAdministrator(authService, config);
